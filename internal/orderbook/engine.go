@@ -51,7 +51,7 @@ func (b *book) Add(o Order) (fills []Fill, rests bool) {
 			return fills, true
 		}
 
-		return fills, true
+		return fills, false
 	}
 
 	return nil, false
