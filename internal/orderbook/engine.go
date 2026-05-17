@@ -45,7 +45,7 @@ func (b *book) Add(o Order) (fills []Fill, rests bool) {
 		return fills, false
 
 	case Limit:
-		fills = b.matchLimit(&stored)
+		fills, _ := b.matchLimit(&stored)
 		if stored.RemainingQty() > 0 {
 			b.rest(&stored)
 			return fills, true
@@ -112,7 +112,8 @@ func (b *book) matchMarket(o *Order) []Fill {
 			break // no liquidity, remainder cancelled (IOC)
 		}
 
-		fills = append(fills, b.sweep(lvl, best, o)...)
+		f, _ := b.sweep(lvl, best, o)
+		fills = append(fills, f...)
 
 		if lvl.empty() {
 			b.removeLevel(opposite(o.Side), best)
@@ -123,8 +124,9 @@ func (b *book) matchMarket(o *Order) []Fill {
 }
 
 // Match limit orders against the book as long as prices cross
-func (b *book) matchLimit(o *Order) []Fill {
+func (b *book) matchLimit(o *Order) ([]Fill, bool) {
 	var fills []Fill
+	makerRested := false
 
 	for o.RemainingQty() > 0 {
 		best, lvl := b.bestOpposite(o.Side)
@@ -137,19 +139,24 @@ func (b *book) matchLimit(o *Order) []Fill {
 			break
 		}
 
-		fills = append(fills, b.sweep(lvl, best, o)...)
+		f, hadRemaining := b.sweep(lvl, best, o)
+		fills = append(fills, f...)
+		if hadRemaining {
+			makerRested = true
+		}
 
 		if lvl.empty() {
 			b.removeLevel(opposite(o.Side), best)
 		}
 	}
 
-	return fills
+	return fills, makerRested
 }
 
 // Walk the FIFO list at a price level and generate fills
-func (b *book) sweep(lvl *level, execPrice int64, taker *Order) []Fill {
+func (b *book) sweep(lvl *level, execPrice int64, taker *Order) ([]Fill, bool) {
 	var fills []Fill
+	makerRested := false
 
 	for lvl.head != nil && taker.RemainingQty() > 0 {
 		makerNode := lvl.head
@@ -168,7 +175,6 @@ func (b *book) sweep(lvl *level, execPrice int64, taker *Order) []Fill {
 		})
 
 		if maker.RemainingQty() == 0 {
-			// Maker fully filled: unlink and remove from cancel map.
 			lvl.head = makerNode.next
 			if lvl.head != nil {
 				lvl.head.prev = nil
@@ -176,10 +182,12 @@ func (b *book) sweep(lvl *level, execPrice int64, taker *Order) []Fill {
 				lvl.tail = nil
 			}
 			delete(b.orders, maker.ID)
+		} else {
+			makerRested = true
 		}
 	}
 
-	return fills
+	return fills, makerRested
 }
 
 // Adds partial/unfilled orders to the book
