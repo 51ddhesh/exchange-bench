@@ -364,3 +364,91 @@ func min64(a, b int64) int64 {
 	return b
 }
 
+type cmdType uint8
+
+const (
+	cmdAdd    cmdType = 1
+	cmdCancel cmdType = 2
+)
+
+type engineCmd struct {
+	typ      cmdType
+	order    Order  // set for cmdAdd
+	cancelID uint64 // set for cmdCancel
+	respCh   chan engineResp
+}
+
+type engineResp struct {
+	fills        []Fill
+	rests        bool
+	cancelResult CancelResult
+}
+
+// Engine wraps a book and serialises all access through a buffered channel.
+// One goroutine runs the event loop via Run. All other goroutines call
+// Submit and CancelOrder, which block until the engine responds.
+type Engine struct {
+	b     *book
+	cmdCh chan engineCmd
+}
+
+// NewEngine creates an Engine with a pre-allocated arena of the given capacity.
+// Use 1_000_000 for a standard 1M-tick run.
+func NewEngine(capacity int) *Engine {
+	return &Engine{
+		b:     newBook(capacity),
+		cmdCh: make(chan engineCmd, 4096),
+	}
+}
+
+// Run starts the engine event loop. Must be called in a dedicated goroutine.
+//
+// It calls runtime.LockOSThread() to pin itself to an OS thread, which is a
+// prerequisite for setting CPU affinity externally (e.g. via taskset or a
+// sched_setaffinity syscall wrapper). The caller is responsible for setting
+// affinity after launching the goroutine if core pinning is desired.
+func (e *Engine) Run(ctx context.Context) {
+	runtime.LockOSThread()
+	for {
+		select {
+		case cmd := <-e.cmdCh:
+			e.dispatch(cmd)
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+func (e *Engine) dispatch(cmd engineCmd) {
+	switch cmd.typ {
+	case cmdAdd:
+		fills, rests := e.b.Add(cmd.order)
+		cmd.respCh <- engineResp{fills: fills, rests: rests}
+	case cmdCancel:
+		result := e.b.Cancel(cmd.cancelID)
+		cmd.respCh <- engineResp{cancelResult: result}
+	}
+}
+
+// Submit sends an order to the engine and blocks until the response.
+// Safe to call from any goroutine.
+func (e *Engine) Submit(o Order) ([]Fill, bool) {
+	respCh := make(chan engineResp, 1)
+	e.cmdCh <- engineCmd{typ: cmdAdd, order: o, respCh: respCh}
+	resp := <-respCh
+	return resp.fills, resp.rests
+}
+
+// CancelOrder cancels a resting order by its internal uint64 ID.
+func (e *Engine) CancelOrder(id uint64) CancelResult {
+	respCh := make(chan engineResp, 1)
+	e.cmdCh <- engineCmd{typ: cmdCancel, cancelID: id, respCh: respCh}
+	resp := <-respCh
+	return resp.cancelResult
+}
+
+// Reset clears all book state and rewinds arenas.
+// Stop the engine's Run goroutine (cancel its context) before calling Reset.
+func (e *Engine) Reset() {
+	e.b.Reset()
+}
