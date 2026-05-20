@@ -21,12 +21,9 @@ func newLevel(price int64) *level {
 	}
 }
 
-// Add a new order to the tail and returns the node as the tail
-func (l *level) push(o *Order) *node {
-	n := &node{
-		order: o,
-	}
-
+// Append a pre-allocated, pre-wired node to the tail
+// caller must set n.order before calling push
+func (l *level) push(n *node) {
 	if l.tail == nil {
 		l.head = n
 		l.tail = n
@@ -36,12 +33,10 @@ func (l *level) push(o *Order) *node {
 		l.tail = n
 	}
 
-	l.total += o.RemainingQty()
-
-	return n
+	l.total += n.order.RemainingQty()
 }
 
-// Pop an order after it is cancelled or filled
+// Unlink a node in constant time. Called on cancel or full fill
 func (l *level) remove(n *node) {
 	if n.prev != nil {
 		n.prev.next = n.next
