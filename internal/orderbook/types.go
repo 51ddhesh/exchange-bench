@@ -1,9 +1,5 @@
 package orderbook
 
-import (
-	"time"
-)
-
 type Side int8
 
 const (
@@ -19,13 +15,13 @@ const (
 )
 
 type Order struct {
-	ID        string
+	ID        uint64
 	Side      Side
 	Type      OrderType
 	Price     int64
 	Qty       int64
 	FilledQty int64
-	ArrivedAt time.Time
+	ArrivedAt int64 // time.Now().UnixNano(), set by the sequencer
 }
 
 func (o *Order) RemainingQty() int64 {
@@ -33,8 +29,8 @@ func (o *Order) RemainingQty() int64 {
 }
 
 type Fill struct {
-	MakerOrderID string
-	TakerOrderID string
+	MakerOrderID uint64
+	TakerOrderID uint64
 	ExecPrice    int64
 	ExecQty      int64
 }
