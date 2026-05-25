@@ -76,4 +76,32 @@ All notable changes to this project are documented here.
 
 ### Changed
 - [tests](./internal/orderbook/book_test.go): All tests migrated from `NewBook()` to `newBook(1024)`. Order IDs changed from strings to `uint64`. Added missing `rests` assertion in `TestPartialFill`. Removed redundant comments and secondary assertions (total filled qty checks, intermediate best bid/ask checks).
+
+
+## May 25, 2026
+
+### Added
+- [tick](./internal/workload/tick.go): Single instruction in the deterministic workload sequence.
+  - `TickType` enum (`TickAdd = 1`, `TickCancel = 2`) distinguishing ADD and CANCEL instructions.
+  - `Tick` struct with fields: `Type`, `OrderID` (string — e.g. `"o1"`, `"o2"` — converted to `uint64` by the sequencer layer), `Side` (`'B'`/`'S'`, zero for CANCEL), `OrdType` (`'L'`/`'M'`, zero for CANCEL), `Price` (fixed-point ×10000, zero for market orders and CANCEL), `Qty` (zero for CANCEL).
+  - Cancel ticks have zero-valued payload fields; the protocol layer and validator rely on this invariant.
+- [generator](./internal/workload/generator.go): Deterministic but statistically-invariant market regime generator.
+  - Market structure constants: `tickSize = 100` (×10000 scale), `baseMid = 10_000_000`, `midFloor = 1_000_000`, `midSigma = 0.0002` (per-tick log-normal volatility), `spreadTicks = 10` (half-width of limit price band around mid), `qtyMin = 1`, `qtyMax = 100`.
+  - **5 market regimes** with Gaussian blending for smooth transitions:
+    - *Warmup* (center=0.05): 90% limit, 10% cancel — establishes baseline book depth.
+    - *Normal* (center=0.30): 60% limit, 15% cancel — mixed order flow, moderate crossing.
+    - *MarketMaking* (center=0.55): 80% limit, 30% cancel — tight spread, partial fills, FIFO queue stress.
+    - *CancelStorm* (center=0.75): 30% limit, 70% cancel — book integrity under mass cancellation, zombie-fill risk.
+    - *Spike* (center=0.92): 60% limit, 15% cancel — peak throughput, lock contention, queue depth pressure.
+  - `Generate(seed, totalTicks)` returns a deterministic `[]Tick` sequence.
+  - Box-Muller transform drives a log-normal mid-price walk, clamped to `midFloor`.
+  - `blend()` computes Gaussian-weighted convex combination of regime parameters at each tick index, plus independent ±0.05 noise, clamped to [0, 1].
+  - `quantize()` rounds price down to nearest `tickSize` multiple (minimum `tickSize`).
+  - Swap-remove selection from a running resting pool for cancel targets.
+- [generator tests](./internal/workload/generator_test.go): 257 lines covering deterministic and statistical invariants.
+  - **Reproducibility**: `TestDeterminism` — identical (seed, totalTicks) must produce byte-identical output (critical platform guarantee). `TestDifferentSeedsDifferentOutput` — distinct seeds produce distinct sequences.
+  - **Structural invariants**: `TestTotalTickCount` (output length equals `totalTicks`), `TestAddFieldsPopulated` (all ADD ticks have valid Side/OrdType/Qty), `TestCancelFieldsClean` (CANCEL ticks have zero-valued payload fields).
+  - **Price invariants**: `TestLimitPricePositive` (limit orders have Price > 0), `TestMarketOrderPriceIsZero` (market orders have Price == 0).
+  - **Cancel correctness**: `TestCancelReferencesOnlyPriorAdds` (every CANCEL target was previously ADDed), `TestNoCancelBeforeItsAdd` (ADD appears at strictly lower index than its CANCEL), `TestCancelPoolInvariant` (CANCEL target is currently resting; no double-cancel).
+  - **Statistical distribution**: `TestCancelFractionInRange` (overall cancel fraction within [0.05, 0.75]), `TestSlidingWindowNonDetectability` (anti-fingerprinting — Gaussian blend keeps all 1K-tick window-to-window cancel-fraction deltas below 0.15, proving no sequential phase boundaries).
 `
