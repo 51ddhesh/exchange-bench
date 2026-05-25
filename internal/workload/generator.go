@@ -24,7 +24,7 @@ const midSigma = 0.0002
 // LO prices are drawn uniformly from [mid - spreadTicks * tickSize, mid + spreadTicks * tickSize]
 const spreadTicks = 10
 
-// Quantitity bounds for all generated orders
+// Quantity bounds for all generated orders
 const (
 	qtyMin int64 = 1
 	qtyMax int64 = 100
