@@ -121,6 +121,11 @@ All notable changes to this project are documented here.
 - [sandbox](./internal/runner/sandbox.go): `Sandbox` interface (`Stdin`/`Stdout`/`Kill`) decoupling the dispatch loop from process management. `dockerSandbox` production implementation creates a hardened Docker container (no network, read-only rootfs, 64 MB tmpfs, 2 CPUs, 512 MB memory, no swap, all caps dropped, no-new-privileges, seccomp) and attaches stdio.
 - [runner](./internal/runner/runner.go): `Runner` struct driving the dispatch loop. `Run()` sends ticks at a configurable rate via `protocol.WriteTick`, collects responses via `collectUntilACK()` (accumulating FILLs before ACK/REJ), records latency in an HDR histogram (1µs–60s), and streams `TickResult` values to the validator. `RunMetrics` aggregates P50/P90/P99 latency, peak TPS, and tick counts. Handles coordinated omission by measuring from `IntendedAt` (ticker fire) rather than actual send time.
 
+### Fixed
+- [sandbox](./internal/runner/sandbox.go): `*bufio.Reader` does not implement `io.ReadCloser` (missing `Close()`). Wrapped it with a `bufReadCloser` struct that composes `*bufio.Reader` with the underlying `io.Closer` from the hijacked Docker attach connection.
+- [runner tests](./internal/runner/runner_test.go): `TestPipeClosedMidRun` hang — the test goroutine closed stdout but stopped reading stdin, causing `WriteTick` to block forever on the unbuffered `io.Pipe`. Fixed by draining remaining stdin with `io.Copy(io.Discard, ...)` after closing stdout.
+- [runner](./internal/runner/runner.go): `TestParseErrorIsNonFatal` — `collectUntilACK` treated all non-EOF errors as fatal pipe errors, aborting the dispatch loop. Added `protocol.ParseError` type to distinguish malformed-line errors from scanner I/O errors. Parse errors now return nil error from `collectUntilACK`, letting the loop continue to the next tick.
+
 ### Changed
 - [go.mod](./go.mod): Added `github.com/HdrHistogram/hdrhistogram-go` (latency histograms) and `github.com/docker/docker` (container sandbox) with all transitive dependencies.
 - [go.sum](./go.sum): Checksums for the above dependency tree (103 lines).
