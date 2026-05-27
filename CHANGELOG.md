@@ -114,3 +114,14 @@ All notable changes to this project are documented here.
 - [protocol reader](./internal/protocol/reader.go): `ReadResponse` parses one contestant stdout line into a `Response`. `parsePrice` inverts `formatPrice` and is robust against variable decimal precision. All parse errors are non-fatal `ParseError` values.
 - [protocol tests](./internal/protocol/reader_test.go): 311 lines covering `TestReadResponse` (all legal/illegal line shapes), `TestPriceRoundTrip` (formatPrice ∘ parsePrice identity), `TestParsePriceRobust` (contestant deviations), and `TestWriteTickRoundTrip` (ADD limit/market and CAN round-trip).
 
+
+## May 27, 2026
+
+### Added
+- [sandbox](./internal/runner/sandbox.go): `Sandbox` interface (`Stdin`/`Stdout`/`Kill`) decoupling the dispatch loop from process management. `dockerSandbox` production implementation creates a hardened Docker container (no network, read-only rootfs, 64 MB tmpfs, 2 CPUs, 512 MB memory, no swap, all caps dropped, no-new-privileges, seccomp) and attaches stdio.
+- [runner](./internal/runner/runner.go): `Runner` struct driving the dispatch loop. `Run()` sends ticks at a configurable rate via `protocol.WriteTick`, collects responses via `collectUntilACK()` (accumulating FILLs before ACK/REJ), records latency in an HDR histogram (1µs–60s), and streams `TickResult` values to the validator. `RunMetrics` aggregates P50/P90/P99 latency, peak TPS, and tick counts. Handles coordinated omission by measuring from `IntendedAt` (ticker fire) rather than actual send time.
+
+### Changed
+- [go.mod](./go.mod): Added `github.com/HdrHistogram/hdrhistogram-go` (latency histograms) and `github.com/docker/docker` (container sandbox) with all transitive dependencies.
+- [go.sum](./go.sum): Checksums for the above dependency tree (103 lines).
+
