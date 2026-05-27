@@ -104,4 +104,13 @@ All notable changes to this project are documented here.
   - **Price invariants**: `TestLimitPricePositive` (limit orders have Price > 0), `TestMarketOrderPriceIsZero` (market orders have Price == 0).
   - **Cancel correctness**: `TestCancelReferencesOnlyPriorAdds` (every CANCEL target was previously ADDed), `TestNoCancelBeforeItsAdd` (ADD appears at strictly lower index than its CANCEL), `TestCancelPoolInvariant` (CANCEL target is currently resting; no double-cancel).
   - **Statistical distribution**: `TestCancelFractionInRange` (overall cancel fraction within [0.05, 0.75]), `TestSlidingWindowNonDetectability` (anti-fingerprinting — Gaussian blend keeps all 1K-tick window-to-window cancel-fraction deltas below 0.15, proving no sequential phase boundaries).
-`
+
+
+## May 26, 2026
+
+### Added
+- [protocol types](./internal/protocol/protocol.go): `Request` and `Response` data types, `ResponseType` enum (`RespACK`, `RespFILL`, `RespREJ`), and `ParseError` sentinel for non-fatal parse failures in the contestant wire protocol.
+- [protocol writer](./internal/protocol/writer.go): `WriteTick` serialises a `workload.Tick` to ASCII line protocol (`ADD`/`CAN`). `formatPrice` converts ×10000 int64 to fixed-4-decimal string without float64.
+- [protocol reader](./internal/protocol/reader.go): `ReadResponse` parses one contestant stdout line into a `Response`. `parsePrice` inverts `formatPrice` and is robust against variable decimal precision. All parse errors are non-fatal `ParseError` values.
+- [protocol tests](./internal/protocol/reader_test.go): 311 lines covering `TestReadResponse` (all legal/illegal line shapes), `TestPriceRoundTrip` (formatPrice ∘ parsePrice identity), `TestParsePriceRobust` (contestant deviations), and `TestWriteTickRoundTrip` (ADD limit/market and CAN round-trip).
+
