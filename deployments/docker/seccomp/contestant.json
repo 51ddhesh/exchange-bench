@@ -1,0 +1,49 @@
+{
+    "defaultAction": "SCMP_ACT_ALLOW",
+    "syscalls": [
+        {
+            "names": [
+                "socket",
+                "connect",
+                "bind",
+                "listen",
+                "accept",
+                "accept4",
+                "sendto",
+                "recvfrom",
+                "sendmsg",
+                "recvmsg",
+                "sendmmsg",
+                "recvmmsg",
+                "socketpair",
+                "setsockopt",
+                "getsockopt",
+                "socketcall",
+                "sendfile",
+                "sendfile64"
+            ],
+            "action": "SCMP_ACT_ERRNO"
+        },
+        {
+            "names": [
+                "mount",
+                "umount2",
+                "pivot_root",
+                "unshare",
+                "setns"
+            ],
+            "action": "SCMP_ACT_ERRNO"
+        },
+        {
+            "names": [
+                "ptrace",
+                "init_module",
+                "finit_module",
+                "delete_module",
+                "kexec_load",
+                "kexec_file_load"
+            ],
+            "action": "SCMP_ACT_ERRNO"
+        }
+    ]
+}
