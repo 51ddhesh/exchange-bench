@@ -1,120 +1,68 @@
 package runner
 
 import (
-	"bufio"
 	"context"
+	"fmt"
 	"io"
-
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/network"
-	"github.com/docker/docker/client"
+	"os/exec"
 )
 
-// Sandbox is the interface the runner depends on.
-// The only operations the dispatch loop needs: write to stdin, read from
-// stdout, and kill the process when done or on error.
-// Keeping this as an interface makes runner_test.go independent of Docker.
+const defaultSeccompPath = "deployments/docker/seccomp/contestant.json"
+
 type Sandbox interface {
 	Stdin() io.WriteCloser
 	Stdout() io.ReadCloser
 	Kill() error
 }
 
-// dockerSandbox is the production Sandbox backed by a Docker container.
-// One instance per evaluation run. Not reused between runs.
-type dockerSandbox struct {
-	cli         *client.Client
-	containerID string
-	stdin       io.WriteCloser
-	stdout      io.ReadCloser
+type cmdSandbox struct {
+	cmd    *exec.Cmd
+	stdin  io.WriteCloser
+	stdout io.ReadCloser
 }
 
-// StartSandbox creates, starts, and attaches to a hardened Docker container
-// running the given image. Returns a ready-to-use Sandbox whose Stdin and
-// Stdout are wired to the container's PID 1 stdio.
-//
-// Hardening applied:
-//   - No network access (NetworkMode: none)
-//   - Read-only root filesystem
-//   - 64 MB tmpfs at /tmp (the only writable path)
-//   - 2 CPUs, 512 MB memory, no swap
-//   - All capabilities dropped
-//   - no-new-privileges and seccomp profile enforced
-//   - AutoRemove: container is deleted the moment it exits
+// StartSandbox launches the contestant image via the docker CLI.
+// Direct OS pipes replace the SDK hijacked-connection + stdcopy path,
+// which has a multiplexed stream format that is fiddly to demux correctly.
 func StartSandbox(ctx context.Context, image string) (Sandbox, error) {
-	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	cmd := exec.CommandContext(ctx, "docker", "run",
+		"--rm",
+		"--interactive",
+		"--network=none",
+		"--read-only",
+		"--tmpfs=/tmp:size=64m",
+		"--cap-drop=ALL",
+		"--security-opt=no-new-privileges",
+		fmt.Sprintf("--security-opt=seccomp=%s", defaultSeccompPath),
+		"--cpus=2",
+		"--memory=512m",
+		"--memory-swap=512m",
+		image,
+	)
+
+	stdin, err := cmd.StdinPipe()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("sandbox: stdin pipe: %w", err)
 	}
 
-	cfg := &container.Config{
-		Image:        image,
-		AttachStdin:  true,
-		AttachStdout: true,
-		AttachStderr: false,
-		OpenStdin:    true,
-		StdinOnce:    true, // close stdin when the attach session ends
-	}
-
-	hostCfg := &container.HostConfig{
-		NetworkMode:    "none",
-		ReadonlyRootfs: true,
-		Tmpfs:          map[string]string{"/tmp": "size=64m"},
-		AutoRemove:     true,
-		CapDrop:        []string{"ALL"},
-		SecurityOpt: []string{
-			"no-new-privileges:true",
-			"seccomp=deployments/docker/seccomp/contestant.json",
-		},
-		Resources: container.Resources{
-			NanoCPUs:   2 * 1e9, // 2.0 CPUs
-			Memory:     512 * 1024 * 1024,
-			MemorySwap: 512 * 1024 * 1024, // equal to Memory = no swap
-		},
-	}
-
-	created, err := cli.ContainerCreate(ctx, cfg, hostCfg, &network.NetworkingConfig{}, nil, "")
+	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("sandbox: stdout pipe: %w", err)
 	}
 
-	// Attach before starting so we don't miss any early output.
-	attachResp, err := cli.ContainerAttach(ctx, created.ID, container.AttachOptions{
-		Stream: true,
-		Stdin:  true,
-		Stdout: true,
-		Stderr: false,
-	})
-	if err != nil {
-		return nil, err
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("sandbox: docker run: %w", err)
 	}
 
-	if err := cli.ContainerStart(ctx, created.ID, container.StartOptions{}); err != nil {
-		attachResp.Close()
-		return nil, err
-	}
-
-	return &dockerSandbox{
-		cli:         cli,
-		containerID: created.ID,
-		stdin:       attachResp.Conn,   // hijacked conn satisfies io.WriteCloser
-		stdout: &bufReadCloser{
-			Reader: attachResp.Reader, // buffered reader over the same conn
-			Closer: attachResp.Conn,
-		},
-	}, nil
+	return &cmdSandbox{cmd: cmd, stdin: stdin, stdout: stdout}, nil
 }
 
-func (s *dockerSandbox) Stdin() io.WriteCloser { return s.stdin }
-func (s *dockerSandbox) Stdout() io.ReadCloser { return s.stdout }
+func (s *cmdSandbox) Stdin() io.WriteCloser { return s.stdin }
+func (s *cmdSandbox) Stdout() io.ReadCloser { return s.stdout }
 
-// Kill sends SIGKILL to the container. AutoRemove handles filesystem cleanup.
-func (s *dockerSandbox) Kill() error {
-	return s.cli.ContainerKill(context.Background(), s.containerID, "SIGKILL")
-}
-
-// bufReadCloser wraps a *bufio.Reader with an io.Closer so it satisfies io.ReadCloser.
-type bufReadCloser struct {
-	*bufio.Reader
-	io.Closer
+func (s *cmdSandbox) Kill() error {
+	if s.cmd.Process != nil {
+		return s.cmd.Process.Kill()
+	}
+	return nil
 }
