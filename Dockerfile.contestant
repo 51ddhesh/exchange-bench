@@ -1,0 +1,8 @@
+FROM golang:1.26.3-bookworm AS build
+WORKDIR /src
+COPY . .
+RUN go build -o /contestant ./cmd/contestant
+
+FROM debian:bookworm-slim
+COPY --from=build /contestant /contestant
+ENTRYPOINT ["/contestant"]
