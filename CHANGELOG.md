@@ -130,3 +130,18 @@ All notable changes to this project are documented here.
 - [go.mod](./go.mod): Added `github.com/HdrHistogram/hdrhistogram-go` (latency histograms) and `github.com/docker/docker` (container sandbox) with all transitive dependencies.
 - [go.sum](./go.sum): Checksums for the above dependency tree (103 lines).
 
+
+## May 28, 2026
+
+### Added
+- [seccomp profile](./deployments/docker/seccomp/contestant.json): Contestant seccomp profile blocking network (socket, connect, bind, etc.) and process-control syscalls (fork, clone, execve). Default-allow with explicit deny list for safety-critical kernel interfaces.
+- [sandbox CLI refactor](./internal/runner/sandbox.go): `StartSandbox` now invokes `docker run` via `os/exec` instead of the Docker SDK. Drops the `bufReadCloser` wrapper (OS pipes natively satisfy `io.ReadCloser`) and removes all Docker SDK imports and dependencies.
+- [contestant binary](./cmd/contestant/main.go): Reference contestant implementation backed by the matching engine. Reads `ADD`/`CAN` from stdin, writes `FILL`/`ACK`/`REJ` to stdout. Any correct platform evaluation must score it at 100%.
+- [validator](./internal/validator/validator.go): `Validator` replays each `TickResult` through an independent reference engine and compares contestant output against reference truth. Detects `OVERFILL`, `UNDERFILL`, `PRICE_TIME_PRIORITY`, `WRONG_EXEC_PRICE`, `ZOMBIE_FILL`, and `CANCEL_MISMATCH` violations. Owns its own `Engine` and `Sequencer` — no shared state with the runner.
+- [validator tests](./internal/validator/validator_test.go): 288 lines covering 12 test cases: correct no-fill, correct with fill, correct cancel, overfill, underfill, price-time priority, wrong exec price, zombie fill, cancel mismatch (OK→REJ and not-found→ACK), multi-level sweep (correct and wrong order), market order IOC, and partial fill.
+- [agent CLI](./cmd/agent/main.go): `cmd/agent` — evaluation entry point. Generates a workload via `workload.Generate`, starts a sandboxed contestant via `runner.StartSandbox`, dispatches ticks via `runner.Run`, scores via `validator.Consume`, and prints a result summary with latency percentiles, tick counts, correctness percentage, and violation breakdown.
+
+### Changed
+- [go.mod](./go.mod): Removed `github.com/docker/docker` and all 20+ transitive Docker SDK dependencies. Only `github.com/HdrHistogram/hdrhistogram-go` remains.
+- [go.sum](./go.sum): Reduced from 103 lines to 14 lines after dependency cleanup.
+
