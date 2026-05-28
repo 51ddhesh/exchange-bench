@@ -1,0 +1,66 @@
+syntax = "proto3";
+package coordinator;
+option go_package = "github.com/51ddhesh/exchange-bench/internal/coordinator/proto";
+
+message Tick {
+    int32 type      = 1; 
+    string order_id = 2;
+    int32  side     = 3;
+    int32  ord_type = 4;
+    int64  price    = 5;
+    int64  qty      = 6;
+}
+
+message WorkerMetrics {
+    int64   ticks_sent  = 1;
+    int64   ticks_acked = 2;
+    int64   p50_us      = 3;
+    int64   p90_us      = 4;
+    int64   p99_us      = 5;
+    double  peak_tps    = 6;
+    bool    timed_out   = 7;
+    string  worker_id   = 8;
+}
+
+message PrepareRequest {
+    string         run_id       = 1;
+    string         image        = 2;
+    repeated Tick  ticks        = 3;
+    int32          rate_per_sec = 4;
+}
+
+message PrepareResponse {
+    bool   ready = 1;
+    string error = 2;
+}
+
+message FireRequest {
+    string run_id          = 1;
+    int64  fire_at_unix_ns = 2;
+}
+
+message TelemetryEvent {
+    string order_id       = 1;
+    int64  intended_at_ns = 2;
+    int64  received_at_ns = 3;
+    bool   acked          = 4;
+    string violation      = 5;
+}
+
+message SetRateRequest {
+    string run_id      = 1;
+    int32  rate_per_sec = 2;
+}
+
+message SetRateResponse {}
+
+message CollectRequest {
+    string run_id = 1;
+}
+
+service WorkerService {
+    rpc Prepare(PrepareRequest)         returns (PrepareResponse);
+    rpc Fire(FireRequest)               returns (stream TelemetryEvent);
+    rpc SetRate(SetRateRequest)         returns (SetRateResponse);
+    rpc CollectMetrics(CollectRequest)  returns (WorkerMetrics);
+}
