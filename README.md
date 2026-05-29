@@ -39,14 +39,39 @@ Protobuf definitions and generated Go code for the `WorkerService` gRPC API: `Pr
 
 ## Getting Started
 
+### Prerequisites
+
+- Go 1.26+
+- Docker (with rootless setup recommended)
+- Built contestant image: `docker build -t contestant -f Dockerfile.contestant .`
+
+### Build
+
 ```bash
-# Build the reference contestant image
-docker build -t contestant -f Dockerfile.contestant .
+# Single-host binary
+go build -o bin/agent ./cmd/agent
 
-# Single-host evaluation (500 ticks at 100 tps)
+# Distributed evaluation binaries (required for launch scripts)
+go build -o bin/worker ./cmd/worker
+go build -o bin/coordinator ./cmd/coordinator
+```
+
+### Single-host Evaluation
+
+```bash
 go run ./cmd/agent --image contestant --ticks 500 --rate 100
+```
 
-# Distributed evaluation (start workers first)
+### Distributed Evaluation
+
+Build the binaries first, then use the launch scripts or run manually:
+
+```bash
+# Using launch scripts (builds must be in bin/)
+./scripts/run_workers.sh
+./scripts/run_coordinators.sh
+
+# Or run manually:
 go run ./cmd/worker --listen :9090 --worker-id node-1 &
 go run ./cmd/worker --listen :9091 --worker-id node-2 &
 go run ./cmd/coordinator --workers localhost:9090,localhost:9091 \
