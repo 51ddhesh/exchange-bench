@@ -3,6 +3,7 @@ package coordinator
 import (
 	"context"
 	"fmt"
+	"os"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -32,7 +33,11 @@ type Coordinator struct {
 func New(cfg Config) (*Coordinator, error) {
 	c := &Coordinator{cfg: cfg}
 	for _, addr := range cfg.WorkerAddrs {
-		conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		conn, err := grpc.NewClient(addr,
+			grpc.WithTransportCredentials(insecure.NewCredentials()),
+			grpc.WithDefaultCallOptions(grpc.MaxCallSendMsgSize(64*1024*1024)),
+		)
+
 		if err != nil {
 			c.Close()
 			return nil, fmt.Errorf("coordinator: dial %s: %w", addr, err)
@@ -52,14 +57,17 @@ func (c *Coordinator) Close() {
 func (c *Coordinator) Run(ctx context.Context, ticks []workload.Tick) (runner.RunMetrics, error) {
 	shards := splitShards(ticks, len(c.clients))
 
-	// ── Phase 1: Prepare ─────────────────────────────────────────────────────
+	// Prepare gets its own 60s deadline — it's just serialization + handshake.
+	prepCtx, prepCancel := context.WithTimeout(ctx, 60*time.Second)
+	defer prepCancel()
+
 	prepErrs := make([]error, len(c.clients))
 	var prepWg sync.WaitGroup
 	for i, client := range c.clients {
 		prepWg.Add(1)
 		go func(i int, client proto.WorkerServiceClient) {
 			defer prepWg.Done()
-			resp, err := client.Prepare(ctx, &proto.PrepareRequest{
+			resp, err := client.Prepare(prepCtx, &proto.PrepareRequest{
 				RunId:      c.cfg.RunID,
 				Image:      c.cfg.Image,
 				Ticks:      workloadToProto(shards[i]),
@@ -75,14 +83,18 @@ func (c *Coordinator) Run(ctx context.Context, ticks []workload.Tick) (runner.Ru
 		}(i, client)
 	}
 	prepWg.Wait()
+	prepCancel()
 	for _, err := range prepErrs {
 		if err != nil {
 			return runner.RunMetrics{}, fmt.Errorf("coordinator: prepare failed: %w", err)
 		}
 	}
 
-	// ── Phase 2: Fire ────────────────────────────────────────────────────────
-	fireAt := time.Now().Add(500 * time.Millisecond)
+	// Fire gets a fresh context independent of prepare time.
+	fireCtx, fireCancel := context.WithTimeout(ctx, 300*time.Second)
+	defer fireCancel()
+
+	fireAt := time.Now().Add(3 * time.Second)
 
 	telemetryCh := make(chan *proto.TelemetryEvent, 8192)
 	fireErrs := make([]error, len(c.clients))
@@ -92,17 +104,20 @@ func (c *Coordinator) Run(ctx context.Context, ticks []workload.Tick) (runner.Ru
 		fireWg.Add(1)
 		go func(i int, client proto.WorkerServiceClient) {
 			defer fireWg.Done()
-			stream, err := client.Fire(ctx, &proto.FireRequest{
+			stream, err := client.Fire(fireCtx, &proto.FireRequest{
 				RunId:        c.cfg.RunID,
 				FireAtUnixNs: fireAt.UnixNano(),
 			})
 			if err != nil {
+				fmt.Fprintf(os.Stderr, "[coordinator] Fire worker %d error: %v\n", i, err)
 				fireErrs[i] = err
 				return
 			}
+			fmt.Fprintf(os.Stderr, "[coordinator] Fire worker %d stream open\n", i)
 			for {
 				evt, err := stream.Recv()
 				if err != nil {
+					fmt.Fprintf(os.Stderr, "[coordinator] Fire worker %d stream closed: %v\n", i, err)
 					return
 				}
 				telemetryCh <- evt
@@ -127,7 +142,7 @@ func (c *Coordinator) Run(ctx context.Context, ticks []workload.Tick) (runner.Ru
 		rate := c.cfg.InitialRate
 		for {
 			select {
-			case <-ctx.Done():
+			case <-fireCtx.Done():
 				return
 			case <-saturated:
 				return
@@ -135,7 +150,7 @@ func (c *Coordinator) Run(ctx context.Context, ticks []workload.Tick) (runner.Ru
 			}
 			rate = min(rate*2, c.cfg.MaxRate)
 			for _, client := range c.clients {
-				client.SetRate(ctx, &proto.SetRateRequest{ //nolint:errcheck
+				client.SetRate(fireCtx, &proto.SetRateRequest{ //nolint:errcheck
 					RunId:      c.cfg.RunID,
 					RatePerSec: int32(rate),
 				})
@@ -152,10 +167,8 @@ func (c *Coordinator) Run(ctx context.Context, ticks []workload.Tick) (runner.Ru
 	// ackRate < sendRate*0.95 = saturation. PeakTPS = highest window before that.
 	var peakTPS float64
 	var consecBelow int
-
 	windowStart := time.Now()
 	var windowAcks int64
-
 	satOnce := sync.Once{}
 
 	for evt := range telemetryCh {
@@ -166,18 +179,20 @@ func (c *Coordinator) Run(ctx context.Context, ticks []workload.Tick) (runner.Ru
 		if time.Since(windowStart) >= time.Second {
 			ackRate := float64(windowAcks)
 			sendRate := float64(currentRate.Load())
-			threshold := sendRate * 0.95
 
-			if ackRate >= threshold {
-				if ackRate > peakTPS {
-					peakTPS = ackRate
-				}
-				consecBelow = 0
-			} else {
+			// Always track highest ACK rate seen.
+			if ackRate > peakTPS {
+				peakTPS = ackRate
+			}
+
+			// Saturation: two consecutive windows below 95% of send rate.
+			if ackRate < sendRate*0.95 {
 				consecBelow++
 				if consecBelow >= 2 {
 					satOnce.Do(func() { close(saturated) })
 				}
+			} else {
+				consecBelow = 0
 			}
 
 			windowAcks = 0
