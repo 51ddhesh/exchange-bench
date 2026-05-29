@@ -155,3 +155,21 @@ All notable changes to this project are documented here.
 - [go.mod](./go.mod): Removed `github.com/docker/docker` and all 20+ transitive Docker SDK dependencies. Added `google.golang.org/grpc`, `google.golang.org/protobuf`, and their transitive deps (`golang.org/x/net`, `golang.org/x/text`, OpenTelemetry SDK, `google.golang.org/genproto`).
 - [go.sum](./go.sum): Updated with checksums for gRPC, protobuf, and OpenTelemetry dependency tree.
 
+
+## May 29, 2026
+
+### Added
+- [run_workers.sh](./scripts/run_workers.sh): Launch script for the bot fleet worker gRPC servers. Starts 5 workers on ports 9090–9094 with seccomp profiles and traps `SIGINT`/`SIGTERM` for clean shutdown.
+- [run_coordinator.sh](./scripts/run_coordinator.sh): Launch script for the distributed evaluation coordinator. Sleeps 2s for workers to settle, then runs 1M ticks across 5 workers with ramp-up from 2K/s to 50K/s.
+- [.gitignore](./.gitignore): Ignores `bin/` — compiled binaries are build artifacts and should not be tracked.
+
+### Fixed
+- [worker/coordinator](./internal/botworker/worker.go): Race condition on startup — coordinator launched before all worker gRPC servers finished binding ports. `grpc.NewClient` in Go is lazy and doesn't dial until the first RPC, causing Prepare calls to race against `net.Listen`. Fixed with a readiness probe loop: `waitUntilReachable(addr, 10s)` for each worker before proceeding.
+- [worker/firer](./internal/botworker/firer.go): Goroutine deadlock in `worker.Fire` — `f.Run()` blocked until the reader goroutine closed `f.events`, then `range f.Events()` was called after the channel was already closed and empty. All telemetry silently dropped. Fixed by starting the drain goroutine **before** `f.Run()` so the consumer is live before the producer starts.
+- [runner/sandbox](./internal/runner/sandbox.go): Docker seccomp profile path resolved to CWD — `filepath.Abs("")` returns the current working directory, not an error. The seccomp field was declared on `workerServer` but never assigned in `NewWorkerServer`. Docker received the CWD (a directory) as the seccomp path. Fixed by (1) assigning `seccomp` in `NewWorkerServer`, (2) using `filepath.Abs` in `StartSandbox` to ensure an absolute path, (3) passing the absolute path in the launch script.
+- [runner/sandbox](./internal/runner/sandbox.go): Docker containers could not start without root — the default Docker installation requires root or docker group membership. Worker processes launched without sudo failed silently because `cmd.Stderr` was nil. Fixed by installing rootless Docker and setting `cmd.Stderr = os.Stderr` in `StartSandbox` to surface Docker errors immediately.
+- [coordinator/gRPC](./internal/coordinator/coordinator.go): gRPC message size limit exceeded — default 4MB max message size was too small for 200K tick shards (~4.2MB serialized). Fixed by increasing limits on both sides: `grpc.MaxCallSendMsgSize(64<<20)` on the coordinator client and `grpc.MaxRecvMsgSize(64<<20)` on the worker server.
+- [coordinator](./internal/coordinator/coordinator.go): Prepare phase consumed the single run context budget — a shared `context.WithTimeout(ctx, 120s)` for the entire run meant serializing and transmitting 1M ticks over gRPC consumed most of the budget, causing Fire calls to immediately return `DeadlineExceeded`. Fixed by splitting into independent `prepCtx` (60s) and `fireCtx` (300s) with a shared parent context as an absolute ceiling.
+- [coordinator](./internal/coordinator/coordinator.go): `fireAt` timestamp already in the past — `fireAt = time.Now() + 500ms` was computed **before** the Prepare phase. With large tick shards, Prepare took several seconds, making `fireAtUnixNs` expired by the time Fire RPCs reached workers. Fixed by computing `fireAt` **after** Prepare completes with a larger 3s offset.
+- [coordinator](./internal/coordinator/coordinator.go): `PeakTPS` always zero — saturation detection tracked `peakTPS` only inside the `ackRate >= threshold` branch. Since the open-loop send rate was always higher than the sandbox ACK rate, this branch was never entered. Fixed by tracking the max ACK rate unconditionally, separated from saturation detection logic.
+
