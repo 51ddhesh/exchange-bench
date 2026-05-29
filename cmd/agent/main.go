@@ -32,7 +32,7 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
 
-	sb, err := runner.StartSandbox(ctx, *image)
+	sb, err := runner.StartSandbox(ctx, *image, "deployments/docker/seccomp/contestant.json")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "[agent] sandbox start: %v\n", err)
 		os.Exit(1)

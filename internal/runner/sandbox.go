@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
+	"path/filepath"
 )
 
 const defaultSeccompPath = "deployments/docker/seccomp/contestant.json"
@@ -24,7 +26,12 @@ type cmdSandbox struct {
 // StartSandbox launches the contestant image via the docker CLI.
 // Direct OS pipes replace the SDK hijacked-connection + stdcopy path,
 // which has a multiplexed stream format that is fiddly to demux correctly.
-func StartSandbox(ctx context.Context, image string) (Sandbox, error) {
+func StartSandbox(ctx context.Context, image string, seccompPath string) (Sandbox, error) {
+	absSeccomp, err := filepath.Abs(seccompPath)
+	if err != nil {
+		return nil, fmt.Errorf("sandbox: resolve seccomp path: %w", err)
+	}
+
 	cmd := exec.CommandContext(ctx, "docker", "run",
 		"--rm",
 		"--interactive",
@@ -33,7 +40,7 @@ func StartSandbox(ctx context.Context, image string) (Sandbox, error) {
 		"--tmpfs=/tmp:size=64m",
 		"--cap-drop=ALL",
 		"--security-opt=no-new-privileges",
-		fmt.Sprintf("--security-opt=seccomp=%s", defaultSeccompPath),
+		fmt.Sprintf("--security-opt=seccomp=%s", absSeccomp),
 		"--cpus=2",
 		"--memory=512m",
 		"--memory-swap=512m",
@@ -49,6 +56,8 @@ func StartSandbox(ctx context.Context, image string) (Sandbox, error) {
 	if err != nil {
 		return nil, fmt.Errorf("sandbox: stdout pipe: %w", err)
 	}
+
+	cmd.Stderr = os.Stderr // surface docker errors to worker terminal
 
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("sandbox: docker run: %w", err)
