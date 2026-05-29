@@ -45,6 +45,7 @@ func (f *inFlight) pop(orderID string) (int64, bool) {
 type firer struct {
 	ticks      []proto.Tick
 	image      string
+	seccomp    string
 	rate       atomic.Int32
 	ticksSent  atomic.Int64
 	ticksAcked atomic.Int64
@@ -55,12 +56,13 @@ type firer struct {
 	done       chan struct{}
 }
 
-func newFirer(ticks []*proto.Tick, image string, initialRate int32) *firer {
+func newFirer(ticks []*proto.Tick, image string, initialRate int32, seccomp string) *firer {
 	f := &firer{
-		image:  image,
-		hist:   hdrhistogram.New(1, 60_000_000, 3),
-		events: make(chan TelemetryEvent, 4096),
-		done:   make(chan struct{}),
+		image:   image,
+		seccomp: seccomp,
+		hist:    hdrhistogram.New(1, 60_000_000, 3),
+		events:  make(chan TelemetryEvent, 4096),
+		done:    make(chan struct{}),
 	}
 
 	f.ticks = make([]proto.Tick, len(ticks))
@@ -81,7 +83,7 @@ func (f *firer) Run(ctx context.Context, fireAtUnixNs int64) error {
 		runtime.Gosched()
 	}
 
-	sb, err := runner.StartSandbox(ctx, f.image)
+	sb, err := runner.StartSandbox(ctx, f.image, f.seccomp)
 	if err != nil {
 		close(f.events)
 		close(f.done)
@@ -149,7 +151,6 @@ func (f *firer) Run(ctx context.Context, fireAtUnixNs int64) error {
 		case <-ctx.Done():
 			f.timedOut.Store(true)
 			goto writerDone
-
 		case <-ticker.C:
 		}
 

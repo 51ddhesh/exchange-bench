@@ -14,6 +14,7 @@ import (
 func main() {
 	listen := flag.String("listen", ":9090", "host:port to serve gRPC on")
 	workerID := flag.String("worker-id", hostname(), "human-readable worker name")
+	seccomp := flag.String("seccomp", "deployments/docker/seccomp/contestant.json", "seccomp profile path")
 	flag.Parse()
 
 	lis, err := net.Listen("tcp", *listen)
@@ -22,8 +23,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	srv := grpc.NewServer()
-	proto.RegisterWorkerServiceServer(srv, botworker.NewWorkerServer(*workerID))
+	srv := grpc.NewServer(
+		grpc.MaxRecvMsgSize(64 * 1024 * 1024),
+	)
+	proto.RegisterWorkerServiceServer(srv, botworker.NewWorkerServer(*workerID, *seccomp))
 
 	fmt.Printf("[worker %s] listening on %s\n", *workerID, *listen)
 
