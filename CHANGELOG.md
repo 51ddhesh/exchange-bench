@@ -173,3 +173,11 @@ All notable changes to this project are documented here.
 - [coordinator](./internal/coordinator/coordinator.go): `fireAt` timestamp already in the past — `fireAt = time.Now() + 500ms` was computed **before** the Prepare phase. With large tick shards, Prepare took several seconds, making `fireAtUnixNs` expired by the time Fire RPCs reached workers. Fixed by computing `fireAt` **after** Prepare completes with a larger 3s offset.
 - [coordinator](./internal/coordinator/coordinator.go): `PeakTPS` always zero — saturation detection tracked `peakTPS` only inside the `ackRate >= threshold` branch. Since the open-loop send rate was always higher than the sandbox ACK rate, this branch was never entered. Fixed by tracking the max ACK rate unconditionally, separated from saturation detection logic.
 
+
+## June 2, 2026
+
+### Added
+- [API server](./cmd/api/main.go): `cmd/api` — HTTP API server for submission-based benchmarking. Routes: `POST /submissions` (multipart team_id, language, source file with extension validation and 1MB limit), `GET /submissions/{submission_id}` (job status + metrics), `GET /teams/{team_id}/submissions` (history, most recent first), `GET /health`. Backed by a configurable worker pool that reuses a pre-generated workload sequence. Supports cpp, rust, go, python, zig.
+- [coordinator Config](./internal/coordinator/coordinator.go): Added `SubmissionID` field (e.g. `team-1_1`) to `coordinator.Config` for identifying submissions in distributed evaluation runs.
+- [coordinator CLI](./cmd/coordinator/main.go): Added `--submission-id` flag to `cmd/coordinator`. Defaults to `run-id` value if empty. Prints submission ID in the results header.
+
