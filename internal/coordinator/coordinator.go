@@ -19,6 +19,7 @@ type Config struct {
 	WorkerAddrs  []string
 	Image        string
 	RunID        string
+	SubmissionID string // added — "team-1_1" format
 	InitialRate  int
 	MaxRate      int
 	RampInterval time.Duration
