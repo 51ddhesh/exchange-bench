@@ -22,6 +22,7 @@ func main() {
 	ramp := flag.Duration("ramp", 5*time.Second, "ramp interval")
 	timeout := flag.Duration("timeout", 120*time.Second, "wall-clock timeout")
 	runID := flag.String("run-id", fmt.Sprintf("run-%d", time.Now().UnixNano()), "unique run ID")
+	submissionID := flag.String("submission-id", "", "submission ID (e.g. team-1_1); defaults to run-id if empty")
 	flag.Parse()
 
 	if *image == "" {
@@ -30,11 +31,17 @@ func main() {
 		os.Exit(1)
 	}
 
+	sid := *submissionID
+	if sid == "" {
+		sid = *runID
+	}
+
 	addrs := strings.Split(*workers, ",")
 	cfg := coordinator.Config{
 		WorkerAddrs:  addrs,
 		Image:        *image,
 		RunID:        *runID,
+		SubmissionID: sid,
 		InitialRate:  *initRate,
 		MaxRate:      *maxRate,
 		RampInterval: *ramp,
@@ -48,7 +55,8 @@ func main() {
 	defer c.Close()
 
 	tickSlice := workload.Generate(*seed, *ticks)
-	fmt.Printf("[coordinator] generated %d ticks  seed=%d  workers=%v\n", len(tickSlice), *seed, addrs)
+	fmt.Printf("[coordinator] generated %d ticks  seed=%d  workers=%v  submission=%s\n",
+		len(tickSlice), *seed, addrs, sid)
 
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
@@ -61,6 +69,7 @@ func main() {
 
 	fmt.Println()
 	fmt.Println("=== ExchangeBench Distributed Results ===")
+	fmt.Printf("Submission     : %s\n", sid)
 	fmt.Printf("Ticks sent     : %d\n", metrics.TicksSent)
 	fmt.Printf("Ticks acked    : %d\n", metrics.TicksAcked)
 	fmt.Printf("Peak TPS       : %.0f\n", metrics.PeakTPS)
