@@ -1,13 +1,13 @@
-// contestant is a reference implementation of the exchange-bench wire protocol.
-// It is backed by the reference matching engine, so any correct platform
-// evaluation must score it at 100% correctness.
+// contestant is a reference implementation of the exchange-bench wire protocol
+// over WebSocket. It accepts concurrent connections on :8080/orders, each
+// backed by its own independent Engine + Sequencer instance.
 //
-// Wire protocol (stdin):
+// Inbound frames (platform → contestant):
 //
 //	ADD <order_id> <side> <type> <price> <qty>
 //	CAN <order_id>
 //
-// Wire protocol (stdout):
+// Outbound frames (contestant → platform), one message per frame:
 //
 //	FILL <order_id> <maker_id> <taker_id> <exec_price> <exec_qty>
 //	ACK  <order_id>
@@ -15,69 +15,100 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"fmt"
+	"net/http"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
+	"syscall"
 
 	"github.com/51ddhesh/exchange-bench/internal/orderbook"
+	"github.com/coder/websocket"
 )
 
 func main() {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/orders", handleOrders)
+
+	srv := &http.Server{Addr: ":8080", Handler: mux}
+
+	go func() {
+		quit := make(chan os.Signal, 1)
+		signal.Notify(quit, syscall.SIGTERM, syscall.SIGINT)
+		<-quit
+		srv.Shutdown(context.Background()) //nolint:errcheck
+	}()
+
+	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		fmt.Fprintf(os.Stderr, "contestant: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+// handleOrders upgrades the HTTP connection to WebSocket, spins up an
+// independent reference engine for this connection, then dispatches frames
+// until the client closes or an error occurs.
+func handleOrders(w http.ResponseWriter, r *http.Request) {
+	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
+		InsecureSkipVerify: true, // bots connect programmatically, no browser Origin
+	})
+	if err != nil {
+		return
+	}
+	defer conn.Close(websocket.StatusNormalClosure, "")
+
 	engine := orderbook.NewEngine(1_000_000)
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 	go engine.Run(ctx)
 
 	seq := orderbook.NewSequencer(engine)
 
-	in := bufio.NewScanner(os.Stdin)
-	out := bufio.NewWriter(os.Stdout)
-
-	for in.Scan() {
-		line := in.Text()
-		fields := strings.Fields(line)
-		if len(fields) == 0 {
-			continue
+	for {
+		_, msg, err := conn.Read(ctx)
+		if err != nil {
+			return
 		}
-
-		switch fields[0] {
-		case "ADD":
-			handleAdd(fields, seq, out)
-		case "CAN":
-			handleCancel(fields, seq, out)
-		default:
-			// Ignore unrecognised commands — don't write anything.
+		if err := dispatch(ctx, conn, seq, strings.TrimSpace(string(msg))); err != nil {
+			return
 		}
-
-		out.Flush()
-	}
-
-	if err := in.Err(); err != nil {
-		fmt.Fprintf(os.Stderr, "contestant: stdin error: %v\n", err)
-		os.Exit(1)
 	}
 }
 
-func handleAdd(fields []string, seq *orderbook.Sequencer, out *bufio.Writer) {
+func dispatch(ctx context.Context, conn *websocket.Conn, seq *orderbook.Sequencer, line string) error {
+	if line == "" {
+		return nil
+	}
+	fields := strings.Fields(line)
+	switch fields[0] {
+	case "ADD":
+		return handleAdd(ctx, conn, seq, fields)
+	case "CAN":
+		return handleCancel(ctx, conn, seq, fields)
+	}
+	return nil
+}
+
+// handleAdd processes an ADD frame. Sends zero or more FILL frames followed
+// by exactly one ACK frame. Sends REJ on malformed input.
+func handleAdd(ctx context.Context, conn *websocket.Conn, seq *orderbook.Sequencer, fields []string) error {
 	// ADD <order_id> <side> <type> <price> <qty>
 	if len(fields) != 6 {
 		if len(fields) >= 2 {
-			fmt.Fprintf(out, "REJ %s bad_format\n", fields[1])
+			return conn.Write(ctx, websocket.MessageText, []byte("REJ "+fields[1]+" bad_format"))
 		}
-		return
+		return nil
 	}
 
 	orderID := fields[1]
-	side := sideFromString(fields[2])
-	ordType := ordTypeFromString(fields[3])
+	side := sideFromByte(fields[2][0])
+	ordType := ordTypeFromByte(fields[3][0])
 	price := parsePrice(fields[4])
 	qty, err := strconv.ParseInt(fields[5], 10, 64)
 	if err != nil {
-		fmt.Fprintf(out, "REJ %s bad_qty\n", orderID)
-		return
+		return conn.Write(ctx, websocket.MessageText, []byte("REJ "+orderID+" bad_qty"))
 	}
 
 	fills, _, _ := seq.Add(orderID, side, ordType, price, qty)
@@ -85,45 +116,46 @@ func handleAdd(fields []string, seq *orderbook.Sequencer, out *bufio.Writer) {
 	for _, f := range fills {
 		makerExt := seq.ExternalID(f.MakerOrderID)
 		takerExt := seq.ExternalID(f.TakerOrderID)
-		fmt.Fprintf(out, "FILL %s %s %s %s %d\n",
+		msg := fmt.Sprintf("FILL %s %s %s %s %d",
 			orderID, makerExt, takerExt,
 			formatPrice(f.ExecPrice), f.ExecQty)
+		if err := conn.Write(ctx, websocket.MessageText, []byte(msg)); err != nil {
+			return err
+		}
 	}
-	fmt.Fprintf(out, "ACK %s\n", orderID)
+	return conn.Write(ctx, websocket.MessageText, []byte("ACK "+orderID))
 }
 
-func handleCancel(fields []string, seq *orderbook.Sequencer, out *bufio.Writer) {
+// handleCancel processes a CAN frame. Sends ACK on success, REJ if not found.
+func handleCancel(ctx context.Context, conn *websocket.Conn, seq *orderbook.Sequencer, fields []string) error {
 	// CAN <order_id>
 	if len(fields) != 2 {
-		return
+		return nil
 	}
 	orderID := fields[1]
-	result := seq.Cancel(orderID)
-	if result == orderbook.CancelOK {
-		fmt.Fprintf(out, "ACK %s\n", orderID)
-	} else {
-		fmt.Fprintf(out, "REJ %s not_found\n", orderID)
+	if seq.Cancel(orderID) == orderbook.CancelOK {
+		return conn.Write(ctx, websocket.MessageText, []byte("ACK "+orderID))
 	}
+	return conn.Write(ctx, websocket.MessageText, []byte("REJ "+orderID+" not_found"))
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
-func sideFromString(s string) orderbook.Side {
-	if s == "B" {
+func sideFromByte(b byte) orderbook.Side {
+	if b == 'B' {
 		return orderbook.Buy
 	}
 	return orderbook.Sell
 }
 
-func ordTypeFromString(s string) orderbook.OrderType {
-	if s == "L" {
+func ordTypeFromByte(b byte) orderbook.OrderType {
+	if b == 'L' {
 		return orderbook.Limit
 	}
 	return orderbook.Market
 }
 
-// parsePrice inverts formatPrice: "100.5000" → 1_005_000.
-// Does not use float64.
+// parsePrice inverts formatPrice: "100.5000" → 1_005_000. Never uses float64.
 func parsePrice(s string) int64 {
 	dotIdx := strings.Index(s, ".")
 	if dotIdx == -1 {
