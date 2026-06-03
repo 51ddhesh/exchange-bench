@@ -1,55 +1,58 @@
 package protocol
 
 import (
-	"bufio"
+	"context"
 	"fmt"
 	"io"
 	"strconv"
 	"strings"
+
+	"github.com/coder/websocket"
 )
 
-// Reader wraps a bufio.Scanner over the contestant's stdout pipe and exposes
-// ReadResponse, which parses exactly one line per call.
+// Reader wraps a websocket.Conn and exposes ReadResponse, which parses
+// exactly one WebSocket text frame per call.
 //
 // All parse errors are non-fatal by design. ReadResponse returns
-// (Response{}, err) on any malformed line. The runner is expected to treat
-// such a result as an incorrect tick and continue — it must never crash
-// because a contestant produced garbage.
+// (Response{}, err) on any malformed frame. The runner treats such a result
+// as an incorrect tick and continues — it must never crash because a
+// contestant produced garbage.
 //
-// Only two errors signal a dead pipe and require the runner to abort:
-//   - io.EOF  — contestant process closed stdout cleanly
-//   - any non-nil scanner error — underlying I/O failure
+// Two errors signal a dead connection and require the runner to abort:
+//   - io.EOF  — contestant closed the WebSocket connection cleanly
+//   - any non-ParseError — underlying connection failure
 type Reader struct {
-	scanner *bufio.Scanner
+	conn *websocket.Conn
+	ctx  context.Context
 }
 
-// NewReader constructs a Reader. r is typically the contestant's stdout pipe.
-// The underlying bufio.Scanner uses the default 64 KB line buffer, which is
-// ample for any valid or adversarially long response line.
-func NewReader(r io.Reader) *Reader {
-	return &Reader{scanner: bufio.NewScanner(r)}
+// NewReader constructs a Reader over a WebSocket connection.
+// ctx is used for all subsequent conn.Read calls — pass the run context.
+func NewReader(conn *websocket.Conn, ctx context.Context) *Reader {
+	return &Reader{conn: conn, ctx: ctx}
 }
 
-// ReadResponse reads one line from the contestant's stdout and parses it.
+// ReadResponse reads one WebSocket text frame from the contestant and parses it.
 //
 // Return semantics:
 //
-//	(Response, nil)      — well-formed line, caller should inspect Response.Type
-//	(Response{}, err)    — parse error: line was malformed; non-fatal, tick is wrong
-//	(Response{}, io.EOF) — pipe closed cleanly; runner should stop
-//	(Response{}, err)    — scanner I/O error; runner should abort
+//	(Response, nil)      — well-formed frame, caller should inspect Response.Type
+//	(Response{}, err)    — parse error: frame was malformed; non-fatal, tick is wrong
+//	(Response{}, io.EOF) — connection closed cleanly; runner should stop
+//	(Response{}, err)    — connection error; runner should abort
 func (rd *Reader) ReadResponse() (Response, error) {
-	if !rd.scanner.Scan() {
-		err := rd.scanner.Err()
-		if err == nil {
+	_, msg, err := rd.conn.Read(rd.ctx)
+	if err != nil {
+		status := websocket.CloseStatus(err)
+		if status == websocket.StatusNormalClosure || status == websocket.StatusGoingAway {
 			return Response{}, io.EOF
 		}
 		return Response{}, err
 	}
 
-	line := rd.scanner.Text()
+	line := strings.TrimSpace(string(msg))
 	if line == "" {
-		return Response{}, newParseError("empty line")
+		return Response{}, newParseError("empty frame")
 	}
 
 	fields := strings.Split(line, " ")
@@ -67,7 +70,6 @@ func (rd *Reader) ReadResponse() (Response, error) {
 }
 
 // parseACK expects: ACK <order_id>
-// Exactly 2 fields.
 func parseACK(fields []string) (Response, error) {
 	if len(fields) != 2 {
 		return Response{}, newParseError("ACK wants 2 fields, got %d", len(fields))
@@ -79,10 +81,6 @@ func parseACK(fields []string) (Response, error) {
 }
 
 // parseFILL expects: FILL <order_id> <maker_order_id> <taker_order_id> <exec_price> <exec_qty>
-// Exactly 6 fields.
-//
-// <exec_price> is the contestant's fixed-4-decimal string. parsePrice inverts
-// the formatPrice transformation without going through float64.
 func parseFILL(fields []string) (Response, error) {
 	if len(fields) != 6 {
 		return Response{}, newParseError("FILL wants 6 fields, got %d", len(fields))
@@ -109,7 +107,6 @@ func parseFILL(fields []string) (Response, error) {
 }
 
 // parseREJ expects: REJ <order_id> [reason words...]
-// Minimum 2 fields. Reason is optional and may contain spaces.
 func parseREJ(fields []string) (Response, error) {
 	if len(fields) < 2 {
 		return Response{}, newParseError("REJ wants at least 2 fields, got %d", len(fields))
@@ -125,24 +122,10 @@ func parseREJ(fields []string) (Response, error) {
 	}, nil
 }
 
-// parsePrice inverts formatPrice: "100.0000" → 1000000.
-//
-// It never uses float64. Algorithm:
-//  1. Split on ".". If no dot, treat the whole string as the integer part
-//     and multiply by 10000.
-//  2. Parse integer and fractional parts as int64 separately.
-//  3. Normalise fracStr to exactly 4 digits: truncate if longer, right-pad
-//     with zeros if shorter. This makes the function robust against
-//     contestants that omit trailing zeros ("100.5" → 1005000) or add
-//     extra digits ("100.50000" → 1005000).
-//  4. Return intPart*10000 + fracPart.
-//
-// Any non-numeric character in either part causes a strconv error, which
-// the caller surfaces as a non-fatal parse error.
+// parsePrice inverts formatPrice: "100.0000" → 1000000. Never uses float64.
 func parsePrice(s string) (int64, error) {
 	dotIdx := strings.Index(s, ".")
 	if dotIdx == -1 {
-		// No decimal point. Contestant wrote a bare integer.
 		n, err := strconv.ParseInt(s, 10, 64)
 		if err != nil {
 			return 0, err
@@ -153,7 +136,6 @@ func parsePrice(s string) (int64, error) {
 	intStr := s[:dotIdx]
 	fracStr := s[dotIdx+1:]
 
-	// Normalise fracStr to exactly 4 digits.
 	if len(fracStr) > 4 {
 		fracStr = fracStr[:4]
 	}
