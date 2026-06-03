@@ -15,13 +15,14 @@ import (
 func main() {
 	seed := flag.Int64("seed", 42, "workload RNG seed")
 	ticks := flag.Int("ticks", 1_000, "number of ticks to generate")
-	rate := flag.Int("rate", 500, "ticks per second (rate-controlled phase)")
-	image := flag.String("image", "", "Docker image for the contestant sandbox")
+	rate := flag.Int("rate", 500, "ticks per second")
+	artifact := flag.String("artifact", "", "path to compiled contestant binary")
+	language := flag.String("language", "go", "contestant language (go, cpp, rust, python, zig)")
 	timeout := flag.Duration("timeout", 120*time.Second, "wall-clock timeout for the run")
 	flag.Parse()
 
-	if *image == "" {
-		fmt.Fprintln(os.Stderr, "error: --image is required")
+	if *artifact == "" {
+		fmt.Fprintln(os.Stderr, "error: --artifact is required")
 		flag.Usage()
 		os.Exit(1)
 	}
@@ -32,8 +33,8 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
 
-	sb, err := runner.StartSandbox(ctx, *image, "deployments/docker/seccomp/contestant.json")
-	if err != nil {
+	sb := runner.NewSandbox("deployments/docker/seccomp/contestant.json")
+	if err := sb.Start(ctx, *artifact, *language); err != nil {
 		fmt.Fprintf(os.Stderr, "[agent] sandbox start: %v\n", err)
 		os.Exit(1)
 	}
@@ -42,19 +43,15 @@ func main() {
 	r := runner.New(sb)
 	v := validator.New()
 
-	// Validator consumes results concurrently in its own goroutines.
 	verdictCh := v.Consume(r.Results())
 
-	// Run blocks until all ticks are dispatched (or ctx expires / pipe dies).
 	metrics, runErr := r.Run(ctx, tickSlice, *rate)
 
-	// Drain verdicts — they may still be processing when Run returns.
 	var verdicts []validator.TickVerdict
 	for vd := range verdictCh {
 		verdicts = append(verdicts, vd)
 	}
 
-	// Fill in scorer fields on metrics.
 	var correctTicks int64
 	vcounts := make(map[validator.ViolationType]int64)
 	for _, vd := range verdicts {
@@ -66,7 +63,6 @@ func main() {
 	}
 	metrics.TicksCorrect = correctTicks
 
-	// ── report ───────────────────────────────────────────────────────────────
 	fmt.Println()
 	fmt.Println("=== ExchangeBench Results ===")
 	fmt.Printf("Ticks sent     : %d\n", metrics.TicksSent)
