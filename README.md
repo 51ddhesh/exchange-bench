@@ -2,6 +2,12 @@
 
 Distributed exchange benchmarking suite for evaluating contestant trading algorithms against a deterministic, statistically-invariant market simulator.
 
+> **⚠ WebSocket migration in progress.** Tests on `main` reference the old pipe-based interfaces and have not yet been updated for the new WebSocket protocol. Switch to the `feat/compile` branch to run the tests against the stable stdin/stdout build.
+>
+> ```bash
+> git checkout feat/compile
+> ```
+
 ## Packages
 
 ### orderbook
@@ -45,10 +51,27 @@ Protobuf definitions and generated Go code for the `WorkerService` gRPC API: `Pr
 - Docker (with rootless setup recommended)
 - Built contestant image: `docker build -t contestant -f Dockerfile.contestant .`
 
+### Tests
+
+Build and all tests pass on the `feat/compile` branch (the last stable state before the WebSocket transport migration). While tests on `main` are being updated:
+
+```bash
+git checkout feat/compile
+go test ./... -v -count=1
+git checkout main
+```
+
+Key test packages:
+
+| Package | Tests | Status |
+|---------|-------|--------|
+| `internal/protocol` | Parse round-trips, error handling, edge cases | ✅ All pass |
+| `internal/runner` | Pipeline dispatch, context cancel, parse errors | ✅ All pass |
+
 ### Build
 
 ```bash
-# Single-host binary
+# Single-host binary (pipe-based — checkout feat/compile first)
 go build -o bin/agent ./cmd/agent
 
 # Distributed evaluation binaries (required for launch scripts)
