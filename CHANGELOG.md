@@ -185,3 +185,25 @@ All notable changes to this project are documented here.
 - [compiler Docker image](./Dockerfile.compiler): Multi-language build environment based on Ubuntu 24.04. Includes g++, libboost-all-dev, libssl-dev, rustc, golang-go, python3, pip3 (websockets), and `uws.h` header. Configures GOPATH/GOCACHE for tmpfs. Zig toolchain commented out.
 - [uWebSockets header](./deployments/docker/uws.h): `uWS::App` and `uWS::SSLApp` template classes for C++ contestants building WebSocket-based exchange clients. Apache 2.0 licensed (Alex Hultman). Provides HTTP/WS routing, pub/sub topic tree, per-socket compression, and TLS server name indication.
 
+## June 3, 2026
+
+### Added
+- [protocol reader](./internal/protocol/reader.go): Migrate `Reader` from `bufio.Scanner` (pipe I/O) to `coder/websocket` — reads frames instead of scanning lines. Parse logic unchanged.
+- [protocol writer](./internal/protocol/writer.go): Migrate `WriteTick` from `io.Writer` to `websocket.Conn`. Frames are self-delimiting; no trailing `\n` appended.
+- [sandbox](./internal/runner/sandbox.go): Rewrite sandbox from interactive pipe container to service container model. New `Sandbox` interface: `Start(artifactPath, language)`, `Endpoint()` (returns `ws://host:port/orders`), `Kill()`, `Wait()`. Creates Docker bridge network, runs container detached with published port, waits for WebSocket readiness. Uses `compiler.Lookup(language).RunCmd()` for container entrypoint.
+- [runner](./internal/runner/runner.go): Migrate dispatch loop from stdin/stdout pipes to WebSocket dial. `Run()` dials `sb.Endpoint()` and exchanges ticks over WebSocket frames.
+- [reference contestant](./cmd/contestant/main.go): Rewrite from stdin/stdout line protocol to WebSocket server on `:8080/orders`. Each connection gets an independent `Engine` + `Sequencer`. Uses `coder/websocket` with graceful shutdown on `SIGTERM`/`SIGINT`.
+- [agent CLI](./cmd/agent/main.go): Replace `--image` (Docker image name) with `--artifact` (compiled binary path) and `--language`. Uses `NewSandbox(...).Start(artifact, language)`.
+- [seccomp profile](./deployments/docker/seccomp/contestant.json): Remove all networking syscalls from blocklist (socket, connect, bind, listen, accept, etc.) — contestant now needs to listen on TCP port `:8080` for WebSocket connections.
+- [runner runtime image](./Dockerfile.runner): New minimal runtime image (`exchange-bench-runner`) based on Ubuntu 24.04 with python3, libssl3, libstdc++6. Compiled contestant binary is bind-mounted at `/app/artifact`.
+
+### Changed
+- [go.mod](./go.mod): Added `github.com/coder/websocket v1.8.14`. Bumped `golang.org/x/net`, `golang.org/x/sys`, `golang.org/x/text`, and `google.golang.org/genproto/googleapis/rpc` indirect deps.
+- [go.sum](./go.sum): Updated checksums for new and bumped dependencies.
+
+### Removed
+- [botworker/firer](./internal/botworker/firer.go): Stubbed out open-loop tick dispatcher. The `Run()` method is a no-op pending re-implementation for the WebSocket-based distributed evaluation path. Fields (`hist`, `events`, `done`) retained to preserve package structure.
+
+### WIP
+- Tests across the stack (`internal/protocol/*_test.go`, `internal/runner/runner_test.go`, `internal/botworker/firer_test.go`) are **not yet updated** for the WebSocket transport swap. They reference the old pipe-based I/O interfaces and are expected to fail.
+
