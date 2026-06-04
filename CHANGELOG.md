@@ -207,3 +207,15 @@ All notable changes to this project are documented here.
 ### WIP
 - Tests across the stack (`internal/protocol/*_test.go`, `internal/runner/runner_test.go`, `internal/botworker/firer_test.go`) are **not yet updated** for the WebSocket transport swap. They reference the old pipe-based I/O interfaces and are expected to fail.
 
+## June 4, 2026
+
+### Added
+- [validator](./internal/validator/validator.go): `NewWithCapacity(capacity)` constructor for arena-sized per-bot validators — avoids 1M-order overhead × 200 bots. `New()` now delegates to `NewWithCapacity(1_000_000)`.
+- [proto](./internal/coordinator/proto/coordinator.proto): `contestant_endpoint` field on `FireRequest` for per-run contestant URL. `run_id` and `submission_id` fields on `TelemetryEvent` for event attribution.
+- [bot](./internal/botworker/bot.go): New `bot` struct — per-bot WebSocket client with open-loop `writeLoop()` (ticker-driven tick dispatch with per-bot rate scaling) and `readLoop()` (FILL accumulation per order, latency histogram recording, single `TelemetryEvent` per terminal ACK/REJ). `run()` dials the contestant endpoint, starts both loops, waits 500ms for in-flight drain.
+- [telemetry](./internal/botworker/telemetry.go): `Tick` and `Responses` fields on `TelemetryEvent` for validation plumbing.
+- [open-loop firer](./internal/botworker/firer.go): Rewrite from single pipe-based bot to 200 WebSocket bots. Each bot gets a tick shard, its own HDR histogram, and a per-bot validator correlator goroutine. Correlators feed `TickResult`s into `validator.Consume()`, read back verdicts, and set `Violation` on events. `Metrics()` merges per-bot histograms via `hdrhistogram.Merge()`.
+- [worker](./internal/botworker/worker.go): `Prepare` no longer takes `image`/`seccomp`. `Fire` passes `ContestantEndpoint` from `FireRequest` to `firer.Run()`.
+- [coordinator](./internal/coordinator/coordinator.go): Smoke test phase — runs first 10K ticks through a closed-loop runner + validator with an 80% correctness gate. `endpointSandbox` wrapper satisfies `runner.Sandbox` for an already-running contestant. Tracks `TicksCorrect` and wires `RunId`/`SubmissionId` onto telemetry events.
+- [coordinator CLI](./cmd/coordinator/main.go): `--contestant-endpoint` flag (required). Prints `TicksCorrect` in results summary.
+
