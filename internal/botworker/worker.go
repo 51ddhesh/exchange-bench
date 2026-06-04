@@ -24,7 +24,7 @@ type workerServer struct {
 	state    runState
 	runID    string
 	workerID string
-	seccomp  string
+	seccomp  string // retained for future sandbox use; not forwarded to firer
 	f        *firer
 }
 
@@ -37,7 +37,7 @@ func (w *workerServer) Prepare(ctx context.Context, req *proto.PrepareRequest) (
 	defer w.mu.Unlock()
 
 	w.runID = req.RunId
-	w.f = newFirer(req.Ticks, req.Image, int32(req.RatePerSec), w.seccomp)
+	w.f = newFirer(req.Ticks, int32(req.RatePerSec))
 	w.state = statePrepared
 
 	return &proto.PrepareResponse{Ready: true}, nil
@@ -68,7 +68,7 @@ func (w *workerServer) Fire(req *proto.FireRequest, stream proto.WorkerService_F
 		}
 	}()
 
-	runErr := f.Run(stream.Context(), req.FireAtUnixNs)
+	runErr := f.Run(stream.Context(), req.FireAtUnixNs, req.ContestantEndpoint)
 	drainWg.Wait()
 
 	w.mu.Lock()
