@@ -35,8 +35,9 @@ message PrepareResponse {
 }
 
 message FireRequest {
-    string run_id          = 1;
-    int64  fire_at_unix_ns = 2;
+    string run_id              = 1;
+    int64  fire_at_unix_ns     = 2;
+    string contestant_endpoint = 3;
 }
 
 message TelemetryEvent {
@@ -45,6 +46,8 @@ message TelemetryEvent {
     int64  received_at_ns = 3;
     bool   acked          = 4;
     string violation      = 5;
+    string run_id         = 6;
+    string submission_id  = 7;
 }
 
 message SetRateRequest {
