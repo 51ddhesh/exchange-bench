@@ -10,19 +10,23 @@ import (
 
 	proto "github.com/51ddhesh/exchange-bench/internal/coordinator/proto"
 	"github.com/51ddhesh/exchange-bench/internal/runner"
+	"github.com/51ddhesh/exchange-bench/internal/validator"
 	"github.com/51ddhesh/exchange-bench/internal/workload"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
 
 type Config struct {
-	WorkerAddrs  []string
-	Image        string
-	RunID        string
-	SubmissionID string // added — "team-1_1" format
-	InitialRate  int
-	MaxRate      int
-	RampInterval time.Duration
+	WorkerAddrs        []string
+	Image              string
+	RunID              string
+	SubmissionID       string // added — "team-1_1" format
+	ContestantEndpoint string
+	InitialRate        int
+	MaxRate            int
+	RampInterval       time.Duration
+	RedpandaBrokers    []string
+	RedpandaTopic      string
 }
 
 type Coordinator struct {
@@ -56,6 +60,20 @@ func (c *Coordinator) Close() {
 }
 
 func (c *Coordinator) Run(ctx context.Context, ticks []workload.Tick) (runner.RunMetrics, error) {
+	warmupCount := len(ticks)
+	if warmupCount > 10_000 {
+		warmupCount = 10_000
+	}
+	smokeMetrics, err := c.runSmokeTest(ctx, ticks[:warmupCount])
+	if err != nil {
+		return runner.RunMetrics{}, fmt.Errorf("smoke test: %w", err)
+	}
+	correctness := float64(smokeMetrics.TicksCorrect) / float64(smokeMetrics.TicksSent)
+	if correctness < 0.80 {
+		return runner.RunMetrics{}, fmt.Errorf("correctness gate: %.2f%% < 80%%", correctness*100)
+	}
+	fmt.Fprintf(os.Stderr, "[coordinator] smoke test passed: correctness=%.2f%%\n", correctness*100)
+
 	shards := splitShards(ticks, len(c.clients))
 
 	// Prepare gets its own 60s deadline — it's just serialization + handshake.
@@ -106,8 +124,9 @@ func (c *Coordinator) Run(ctx context.Context, ticks []workload.Tick) (runner.Ru
 		go func(i int, client proto.WorkerServiceClient) {
 			defer fireWg.Done()
 			stream, err := client.Fire(fireCtx, &proto.FireRequest{
-				RunId:        c.cfg.RunID,
-				FireAtUnixNs: fireAt.UnixNano(),
+				RunId:              c.cfg.RunID,
+				FireAtUnixNs:       fireAt.UnixNano(),
+				ContestantEndpoint: c.cfg.ContestantEndpoint,
 			})
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "[coordinator] Fire worker %d error: %v\n", i, err)
@@ -167,14 +186,22 @@ func (c *Coordinator) Run(ctx context.Context, ticks []workload.Tick) (runner.Ru
 	// Count ACKs in 1-second windows. Two consecutive windows where
 	// ackRate < sendRate*0.95 = saturation. PeakTPS = highest window before that.
 	var peakTPS float64
+	var correctCount int64
 	var consecBelow int
 	windowStart := time.Now()
 	var windowAcks int64
 	satOnce := sync.Once{}
 
 	for evt := range telemetryCh {
+		evt.RunId = c.cfg.RunID
+		evt.SubmissionId = c.cfg.SubmissionID
+
 		if evt.Acked {
 			windowAcks++
+		}
+
+		if evt.Violation == "" {
+			correctCount++
 		}
 
 		if time.Since(windowStart) >= time.Second {
@@ -223,6 +250,7 @@ func (c *Coordinator) Run(ctx context.Context, ticks []workload.Tick) (runner.Ru
 
 	result := merge(workerMetrics)
 	result.PeakTPS = peakTPS
+	result.TicksCorrect = correctCount
 	return result, nil
 }
 
@@ -252,3 +280,45 @@ func workloadToProto(ticks []workload.Tick) []*proto.Tick {
 	}
 	return out
 }
+
+// runSmokeTest drives a single closed-loop bot against the already-running
+// contestant endpoint and validates output against the reference engine.
+// Returns metrics with TicksCorrect set. Does not start or stop the sandbox.
+func (c *Coordinator) runSmokeTest(ctx context.Context, ticks []workload.Tick) (runner.RunMetrics, error) {
+	sb := &endpointSandbox{c.cfg.ContestantEndpoint}
+	r := runner.New(sb)
+	v := validator.New()
+	verdictCh := v.Consume(r.Results())
+
+	// Drain verdictCh concurrently with r.Run(). Without this, once the
+	// verdicts buffer (4096) fills, Consume blocks, r.results fills (4096),
+	// and r.Run() deadlocks. Concurrent drain keeps both pipelines flowing.
+	var correct int64
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for vd := range verdictCh {
+			if vd.Correct {
+				correct++
+			}
+		}
+	}()
+
+	smokeCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+
+	metrics, runErr := r.Run(smokeCtx, ticks, 500)
+	wg.Wait()
+	metrics.TicksCorrect = correct
+	return metrics, runErr
+}
+
+// endpointSandbox satisfies runner.Sandbox for an already-running contestant.
+// Start is a no-op; Endpoint returns the pre-configured WebSocket URL.
+type endpointSandbox struct{ endpoint string }
+
+func (e *endpointSandbox) Start(_ context.Context, _, _ string) error { return nil }
+func (e *endpointSandbox) Endpoint() string                           { return e.endpoint }
+func (e *endpointSandbox) Kill() error                                { return nil }
+func (e *endpointSandbox) Wait() error                                { return nil }
