@@ -15,6 +15,7 @@ import (
 func main() {
 	workers := flag.String("workers", "localhost:9090", "comma-separated worker gRPC addresses")
 	image := flag.String("image", "", "Docker image for contestant sandbox")
+	endpoint := flag.String("contestant-endpoint", "", "WebSocket endpoint for contestant (ws://host:8080/orders)")
 	seed := flag.Int64("seed", 42, "workload RNG seed")
 	ticks := flag.Int("ticks", 100_000, "total tick count")
 	initRate := flag.Int("init-rate", 1_000, "starting rate per worker (ticks/sec)")
@@ -30,6 +31,11 @@ func main() {
 		flag.Usage()
 		os.Exit(1)
 	}
+	if *endpoint == "" {
+		fmt.Fprintln(os.Stderr, "error: --contestant-endpoint is required")
+		flag.Usage()
+		os.Exit(1)
+	}
 
 	sid := *submissionID
 	if sid == "" {
@@ -38,13 +44,14 @@ func main() {
 
 	addrs := strings.Split(*workers, ",")
 	cfg := coordinator.Config{
-		WorkerAddrs:  addrs,
-		Image:        *image,
-		RunID:        *runID,
-		SubmissionID: sid,
-		InitialRate:  *initRate,
-		MaxRate:      *maxRate,
-		RampInterval: *ramp,
+		WorkerAddrs:        addrs,
+		Image:              *image,
+		RunID:              *runID,
+		SubmissionID:       sid,
+		ContestantEndpoint: *endpoint,
+		InitialRate:        *initRate,
+		MaxRate:            *maxRate,
+		RampInterval:       *ramp,
 	}
 
 	c, err := coordinator.New(cfg)
@@ -72,6 +79,7 @@ func main() {
 	fmt.Printf("Submission     : %s\n", sid)
 	fmt.Printf("Ticks sent     : %d\n", metrics.TicksSent)
 	fmt.Printf("Ticks acked    : %d\n", metrics.TicksAcked)
+	fmt.Printf("Ticks correct  : %d\n", metrics.TicksCorrect)
 	fmt.Printf("Peak TPS       : %.0f\n", metrics.PeakTPS)
 	fmt.Printf("P50 latency    : %d µs\n", metrics.P50LatencyUs)
 	fmt.Printf("P90 latency    : %d µs\n", metrics.P90LatencyUs)
