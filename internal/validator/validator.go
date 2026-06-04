@@ -46,7 +46,14 @@ type Validator struct {
 }
 
 func New() *Validator {
-	engine := orderbook.NewEngine(1_000_000)
+	return NewWithCapacity(1_000_000)
+}
+
+// NewWithCapacity creates a Validator with a pre-allocated arena of the given
+// capacity. Use this for per-bot validators where 1M is wasteful; size to the
+// shard length + headroom.
+func NewWithCapacity(capacity int) *Validator {
+	engine := orderbook.NewEngine(capacity)
 	seq := orderbook.NewSequencer(engine)
 	return &Validator{engine: engine, seq: seq}
 }
