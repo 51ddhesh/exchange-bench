@@ -82,6 +82,8 @@ go build -o bin/agent ./cmd/agent
 
 The contestant runs as a standalone WebSocket server. Workers connect to it via a shared endpoint, each spawning multiple bots (default 200).
 
+#### Without Redpanda
+
 ```bash
 # 1. Build binaries (see above)
 # 2. Start the contestant WebSocket server
@@ -94,6 +96,7 @@ sleep 2
 # 4. Run the coordinator
 ./bin/coordinator \
   --workers "localhost:9090,localhost:9091,localhost:9092,localhost:9093,localhost:9094" \
+  --image exchange-bench-contestant \
   --contestant-endpoint "ws://localhost:8080/orders" \
   --ticks 10000 \
   --init-rate 200 \
@@ -102,3 +105,35 @@ sleep 2
 ```
 
 The coordinator first runs a **smoke test** (10K ticks, closed-loop, 80% correctness gate required), then shards the workload across workers for the distributed open-loop phase.
+
+#### With Redpanda
+
+Start a Redpanda container, create the telemetry topic, then run the coordinator with `--redpanda-brokers`:
+
+```bash
+# Start Redpanda
+docker run -d --name redpanda -p 19092:19092 \
+  redpandadata/redpanda:latest redpanda start \
+  --overprovisioned --smp 1 \
+  --kafka-addr 0.0.0.0:19092 \
+  --advertise-kafka-addr localhost:19092
+
+# Create topic
+rpk topic create telemetry-events --brokers localhost:19092
+
+# Run coordinator with Redpanda
+./bin/coordinator \
+  --workers "localhost:9090,localhost:9091,localhost:9092,localhost:9093,localhost:9094" \
+  --image exchange-bench-contestant \
+  --contestant-endpoint "ws://localhost:8080/orders" \
+  --ticks 10000 --init-rate 200 --max-rate 5000 --timeout 60s \
+  --redpanda-brokers localhost:19092 \
+  --redpanda-topic telemetry-events
+
+# Verify events
+rpk topic consume telemetry-events --brokers localhost:19092 --num 10
+```
+
+Events are partitioned by `submission_id`. The final event carries `order_id == "__RUN_COMPLETE__"` as a sentinel.
+
+> Redpanda is optional — omitting `--redpanda-brokers` skips the producer entirely with no behaviour change.
