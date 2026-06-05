@@ -10,6 +10,7 @@ import (
 
 	proto "github.com/51ddhesh/exchange-bench/internal/coordinator/proto"
 	"github.com/51ddhesh/exchange-bench/internal/runner"
+	"github.com/51ddhesh/exchange-bench/internal/telemetry"
 	"github.com/51ddhesh/exchange-bench/internal/validator"
 	"github.com/51ddhesh/exchange-bench/internal/workload"
 	"google.golang.org/grpc"
@@ -30,9 +31,10 @@ type Config struct {
 }
 
 type Coordinator struct {
-	cfg     Config
-	clients []proto.WorkerServiceClient
-	conns   []*grpc.ClientConn
+	cfg      Config
+	clients  []proto.WorkerServiceClient
+	conns    []*grpc.ClientConn
+	producer *telemetry.Producer
 }
 
 func New(cfg Config) (*Coordinator, error) {
@@ -50,12 +52,25 @@ func New(cfg Config) (*Coordinator, error) {
 		c.conns = append(c.conns, conn)
 		c.clients = append(c.clients, proto.NewWorkerServiceClient(conn))
 	}
+
+	if len(cfg.RedpandaBrokers) > 0 {
+		p, err := telemetry.New(cfg.RedpandaBrokers, cfg.RedpandaTopic)
+		if err != nil {
+			c.Close()
+			return nil, fmt.Errorf("coordinator: telemetry producer: %w", err)
+		}
+		c.producer = p
+	}
+
 	return c, nil
 }
 
 func (c *Coordinator) Close() {
 	for _, conn := range c.conns {
 		conn.Close()
+	}
+	if c.producer != nil {
+		c.producer.Close()
 	}
 }
 
@@ -107,6 +122,17 @@ func (c *Coordinator) Run(ctx context.Context, ticks []workload.Tick) (runner.Ru
 		if err != nil {
 			return runner.RunMetrics{}, fmt.Errorf("coordinator: prepare failed: %w", err)
 		}
+	}
+
+	var producerCh chan *proto.TelemetryEvent
+	var producerWg sync.WaitGroup
+	if c.producer != nil {
+		producerCh = make(chan *proto.TelemetryEvent, 8192)
+		producerWg.Add(1)
+		go func() {
+			defer producerWg.Done()
+			c.producer.Run(ctx, producerCh) //nolint:errcheck
+		}()
 	}
 
 	// Fire gets a fresh context independent of prepare time.
@@ -196,6 +222,13 @@ func (c *Coordinator) Run(ctx context.Context, ticks []workload.Tick) (runner.Ru
 		evt.RunId = c.cfg.RunID
 		evt.SubmissionId = c.cfg.SubmissionID
 
+		if producerCh != nil {
+			select {
+			case producerCh <- evt:
+			default: // drop on full — telemetry is best-effort
+			}
+		}
+
 		if evt.Acked {
 			windowAcks++
 		}
@@ -230,6 +263,19 @@ func (c *Coordinator) Run(ctx context.Context, ticks []workload.Tick) (runner.Ru
 
 	// Drain the saturated channel in case the ramp loop never fired it.
 	satOnce.Do(func() { close(saturated) })
+
+	if producerCh != nil {
+		select {
+		case producerCh <- &proto.TelemetryEvent{
+			OrderId:      "__RUN_COMPLETE__",
+			RunId:        c.cfg.RunID,
+			SubmissionId: c.cfg.SubmissionID,
+		}:
+		case <-ctx.Done():
+		}
+		close(producerCh)
+		producerWg.Wait()
+	}
 
 	// ── Phase 3: Collect final metrics ───────────────────────────────────────
 	workerMetrics := make([]*proto.WorkerMetrics, len(c.clients))
