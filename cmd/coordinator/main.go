@@ -24,6 +24,8 @@ func main() {
 	timeout := flag.Duration("timeout", 120*time.Second, "wall-clock timeout")
 	runID := flag.String("run-id", fmt.Sprintf("run-%d", time.Now().UnixNano()), "unique run ID")
 	submissionID := flag.String("submission-id", "", "submission ID (e.g. team-1_1); defaults to run-id if empty")
+	redpandaBrokers := flag.String("redpanda-brokers", "", "comma-separated Redpanda broker addresses (empty = skip telemetry)")
+	redpandaTopic := flag.String("redpanda-topic", "telemetry-events", "Redpanda topic for telemetry events")
 	flag.Parse()
 
 	if *image == "" {
@@ -52,6 +54,8 @@ func main() {
 		InitialRate:        *initRate,
 		MaxRate:            *maxRate,
 		RampInterval:       *ramp,
+		RedpandaBrokers:    parseBrokers(*redpandaBrokers),
+		RedpandaTopic:      *redpandaTopic,
 	}
 
 	c, err := coordinator.New(cfg)
@@ -85,4 +89,11 @@ func main() {
 	fmt.Printf("P90 latency    : %d µs\n", metrics.P90LatencyUs)
 	fmt.Printf("P99 latency    : %d µs\n", metrics.P99LatencyUs)
 	fmt.Printf("Timed out      : %v\n", metrics.TimedOut)
+}
+
+func parseBrokers(s string) []string {
+	if s == "" {
+		return nil
+	}
+	return strings.Split(s, ",")
 }
