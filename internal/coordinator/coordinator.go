@@ -311,6 +311,13 @@ func (c *Coordinator) runSmokeTest(ctx context.Context, ticks []workload.Tick) (
 	metrics, runErr := r.Run(smokeCtx, ticks, 500)
 	wg.Wait()
 	metrics.TicksCorrect = correct
+
+	// If the contestant died mid-run, TicksSent < total ticks sent.
+	// The runner returns nil in this case, so check explicitly.
+	if metrics.TicksSent < int64(len(ticks)) {
+		return metrics, fmt.Errorf("contestant died after %d/%d ticks", metrics.TicksSent, len(ticks))
+	}
+
 	return metrics, runErr
 }
 

@@ -59,7 +59,7 @@ func handleOrders(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close(websocket.StatusNormalClosure, "")
 
-	engine := orderbook.NewEngine(1_000_000)
+	engine := orderbook.NewEngine(16_384)
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 	go engine.Run(ctx)
