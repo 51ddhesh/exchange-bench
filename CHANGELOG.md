@@ -207,6 +207,12 @@ All notable changes to this project are documented here.
 ### WIP
 - Tests across the stack (`internal/protocol/*_test.go`, `internal/runner/runner_test.go`, `internal/botworker/firer_test.go`) are **not yet updated** for the WebSocket transport swap. They reference the old pipe-based I/O interfaces and are expected to fail.
 
+## June 5, 2026
+
+### Fixed
+- [contestant](./cmd/contestant/main.go): Reduced per-connection engine arena from 1M to 16K (`NewEngine(1_000_000)` → `NewEngine(16_384)`). The multi-bot firer creates 200 bots per worker, resulting in 1000+ simultaneous WebSocket connections — each allocating a 1M arena caused OOM (~120 GB). 16K is sufficient for per-bot shards (~50 ticks each) and still safe for single-connection smoke test use.
+- [coordinator](./internal/coordinator/coordinator.go): `runSmokeTest` now returns an explicit error `"contestant died after N/M ticks"` when `TicksSent < len(ticks)`, instead of swallowing the runner's nil error.
+
 ## June 4, 2026
 
 ### Added
