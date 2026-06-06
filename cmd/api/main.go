@@ -15,7 +15,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/51ddhesh/exchange-bench/internal/compiler"
 	"github.com/51ddhesh/exchange-bench/internal/coordinator"
+	"github.com/51ddhesh/exchange-bench/internal/runner"
 	"github.com/51ddhesh/exchange-bench/internal/workload"
 )
 
@@ -70,24 +72,26 @@ type jobStatus struct {
 // ── API server ───────────────────────────────────────────────────────────────
 
 type apiServer struct {
-	baseCfg    coordinator.Config // template; RunID + SubmissionID overridden per job
-	seed       int64
-	ticks      int
-	runTimeout time.Duration
-	jobCh      chan job
-	statuses   sync.Map   // submission_id → *jobStatus
-	attempts   sync.Map   // team_id        → *atomic.Int64
-	teamJobs   sync.Map   // team_id        → *[]string  (submission_ids, append-only)
-	mu         sync.Mutex // protects teamJobs appends
+	baseCfg     coordinator.Config // template; RunID + SubmissionID overridden per job
+	seed        int64
+	ticks       int
+	runTimeout  time.Duration
+	seccompPath string
+	jobCh       chan job
+	statuses    sync.Map   // submission_id → *jobStatus
+	attempts    sync.Map   // team_id        → *atomic.Int64
+	teamJobs    sync.Map   // team_id        → *[]string  (submission_ids, append-only)
+	mu          sync.Mutex // protects teamJobs appends
 }
 
-func newAPIServer(baseCfg coordinator.Config, seed int64, ticks int, runTimeout time.Duration, queueDepth int) *apiServer {
+func newAPIServer(baseCfg coordinator.Config, seed int64, ticks int, runTimeout time.Duration, queueDepth int, seccompPath string) *apiServer {
 	return &apiServer{
-		baseCfg:    baseCfg,
-		seed:       seed,
-		ticks:      ticks,
-		runTimeout: runTimeout,
-		jobCh:      make(chan job, queueDepth),
+		baseCfg:     baseCfg,
+		seed:        seed,
+		ticks:       ticks,
+		runTimeout:  runTimeout,
+		seccompPath: seccompPath,
+		jobCh:       make(chan job, queueDepth),
 	}
 }
 
@@ -138,11 +142,33 @@ func (a *apiServer) runJob(ctx context.Context, j job, ticks []workload.Tick) {
 		s.State = stateRunning
 	})
 
+	// Step 1: Compile
+	outDir := filepath.Join("/tmp/exchange-bench", j.SubmissionID, "out")
+	artifactPath, compilerOutput, err := compiler.Compile(ctx, j.SourcePath, j.Language, outDir)
+	if err != nil {
+		a.updateStatus(j.SubmissionID, func(s *jobStatus) {
+			s.State = stateFailed
+			s.Error = fmt.Sprintf("compile error: %s", compilerOutput)
+		})
+		return
+	}
+
+	// Step 2: Start sandbox
+	sb := runner.NewSandbox(a.seccompPath)
+	if err := sb.Start(ctx, artifactPath, j.Language); err != nil {
+		a.updateStatus(j.SubmissionID, func(s *jobStatus) {
+			s.State = stateFailed
+			s.Error = fmt.Sprintf("sandbox start: %v", err)
+		})
+		return
+	}
+	defer sb.Kill()
+
+	// Step 3: Run coordinator
 	cfg := a.baseCfg
 	cfg.RunID = j.RunID
 	cfg.SubmissionID = j.SubmissionID
-	// cfg.Image is already set from the server --image flag via baseCfg.
-	// j.SourcePath is stored for use by the compiler in Step 1.
+	cfg.ContestantEndpoint = sb.Endpoint()
 
 	c, err := coordinator.New(cfg)
 	if err != nil {
@@ -383,6 +409,7 @@ func main() {
 	image := flag.String("image", "", "Docker image for contestant sandbox")
 	pool := flag.Int("pool", 5, "max concurrent benchmark runs")
 	queueDepth := flag.Int("queue-depth", 100, "max queued submissions")
+	seccomp := flag.String("seccomp", "deployments/docker/seccomp/contestant.json", "seccomp profile path")
 	seed := flag.Int64("seed", 42, "workload RNG seed")
 	ticks := flag.Int("ticks", 100_000, "ticks per benchmark run")
 	initRate := flag.Int("init-rate", 1_000, "starting rate per worker (ticks/sec)")
@@ -406,7 +433,7 @@ func main() {
 		RampInterval: *ramp,
 	}
 
-	srv := newAPIServer(baseCfg, *seed, *ticks, *timeout, *queueDepth)
+	srv := newAPIServer(baseCfg, *seed, *ticks, *timeout, *queueDepth, *seccomp)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
