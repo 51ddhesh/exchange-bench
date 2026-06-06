@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ExchangeBench Leaderboard</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: monospace; background: #0f1117; color: #e0e0e0; padding: 24px; }
+  h1 { font-size: 1.4rem; color: #7eb8f7; margin-bottom: 4px; }
+  .subtitle { font-size: 0.75rem; color: #555; margin-bottom: 28px; }
+  h2 { font-size: 0.9rem; color: #aaa; margin: 24px 0 8px; text-transform: uppercase; letter-spacing: 2px; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.82rem; margin-bottom: 8px; }
+  th { text-align: left; padding: 6px 10px; border-bottom: 1px solid #2a2a2a; color: #666; font-weight: normal; }
+  td { padding: 6px 10px; border-bottom: 1px solid #1a1a1a; }
+  tr:hover td { background: #161b22; }
+  .flag { color: #f0b429; }
+  .critical td { background: #1c1600 !important; }
+  @keyframes flashGreen { 0%,100%{background:transparent} 30%{background:#0d3320} }
+  @keyframes flashRed   { 0%,100%{background:transparent} 30%{background:#3a0d0d} }
+  .flash-green td { animation: flashGreen 1s ease; }
+  .flash-red   td { animation: flashRed   1s ease; }
+  .status { font-size: 0.72rem; color: #555; margin-bottom: 20px; }
+  .status.connected { color: #3fb950; }
+  .my-sub { margin-top: 36px; border-top: 1px solid #2a2a2a; padding-top: 24px; }
+  .my-sub h2 { margin-top: 0; }
+  .input-row { display: flex; gap: 8px; margin-bottom: 16px; }
+  input[type=text] { background: #161b22; border: 1px solid #30363d; color: #e0e0e0;
+    padding: 6px 10px; font-family: monospace; font-size: 0.82rem; border-radius: 4px; flex: 1; max-width: 280px; }
+  button { background: #1f6feb; border: none; color: #fff; padding: 6px 16px;
+    font-family: monospace; font-size: 0.82rem; border-radius: 4px; cursor: pointer; }
+  button:hover { background: #388bfd; }
+  #history-error { color: #f85149; font-size: 0.78rem; margin-top: 6px; }
+  .empty { color: #444; font-style: italic; padding: 10px; font-size: 0.8rem; }
+</style>
+</head>
+<body>
+
+<h1>ExchangeBench Leaderboard</h1>
+<div class="subtitle">IICPC — Matching Engine Benchmark</div>
+<div class="status" id="ws-status">● connecting...</div>
+
+<h2>Systems (C++ / Rust / Zig)</h2>
+<table id="tbl-systems"><thead><tr>
+  <th>#</th><th>Team</th><th>Lang</th><th>Score</th><th>Peak TPS</th><th>P99 µs</th><th>Correctness</th><th>⚑</th>
+</tr></thead><tbody></tbody></table>
+
+<h2>GC (Go)</h2>
+<table id="tbl-gc"><thead><tr>
+  <th>#</th><th>Team</th><th>Lang</th><th>Score</th><th>Peak TPS</th><th>P99 µs</th><th>Correctness</th><th>⚑</th>
+</tr></thead><tbody></tbody></table>
+
+<h2>Interpreted (Python)</h2>
+<table id="tbl-interpreted"><thead><tr>
+  <th>#</th><th>Team</th><th>Lang</th><th>Score</th><th>Peak TPS</th><th>P99 µs</th><th>Correctness</th><th>⚑</th>
+</tr></thead><tbody></tbody></table>
+
+<div class="my-sub">
+  <h2>My Submissions</h2>
+  <div class="input-row">
+    <input type="text" id="team-input" placeholder="team-1" />
+    <button onclick="loadHistory()">Load</button>
+  </div>
+  <div id="history-error"></div>
+  <table id="tbl-history" style="display:none"><thead><tr>
+    <th>Attempt</th><th>Submission</th><th>Lang</th><th>Score</th>
+    <th>Peak TPS</th><th>P99 µs</th><th>Correctness</th><th>Completed</th>
+  </tr></thead><tbody></tbody></table>
+</div>
+
+<script>
+const prevRanks = { systems: {}, gc: {}, interpreted: {} };
+
+function pct(v) { return (v * 100).toFixed(2) + '%'; }
+function num(v) { return Number(v).toLocaleString(); }
+function score(v) { return (v * 100).toFixed(1); }
+
+function renderTier(tierId, entries) {
+  const tbody = document.querySelector('#tbl-' + tierId + ' tbody');
+  const prev = prevRanks[tierId] || {};
+  const next = {};
+
+  if (!entries || entries.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="8" class="empty">no submissions yet</td></tr>';
+    prevRanks[tierId] = {};
+    return;
+  }
+
+  const rows = entries.map(e => {
+    next[e.team_id] = e.rank;
+    const prevRank = prev[e.team_id];
+    let flashClass = '';
+    if (prevRank !== undefined && prevRank !== e.rank) {
+      flashClass = e.rank < prevRank ? 'flash-green' : 'flash-red';
+    }
+    const critClass = e.critical_flag ? 'critical' : '';
+    const flag = e.critical_flag ? '<span class="flag">⚠</span>' : '';
+    return `<tr class="${flashClass} ${critClass}">
+      <td>${e.rank}</td>
+      <td>${e.team_id}</td>
+      <td>${e.language}</td>
+      <td>${score(e.composite_score)}</td>
+      <td>${num(e.peak_tps)}</td>
+      <td>${e.p99_us}</td>
+      <td>${pct(e.correctness)}</td>
+      <td>${flag}</td>
+    </tr>`;
+  });
+
+  tbody.innerHTML = rows.join('');
+  prevRanks[tierId] = next;
+}
+
+function applyUpdate(data) {
+  const t = data.tiers || {};
+  renderTier('systems',     t.systems     || []);
+  renderTier('gc',          t.gc          || []);
+  renderTier('interpreted', t.interpreted || []);
+}
+
+function connect() {
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const ws = new WebSocket(proto + '//' + location.host + '/ws');
+  const statusEl = document.getElementById('ws-status');
+
+  ws.onopen = () => {
+    statusEl.textContent = '● connected';
+    statusEl.className = 'status connected';
+  };
+
+  ws.onmessage = e => {
+    try { applyUpdate(JSON.parse(e.data)); } catch (_) {}
+  };
+
+  ws.onclose = () => {
+    statusEl.textContent = '● reconnecting...';
+    statusEl.className = 'status';
+    setTimeout(connect, 2000);
+  };
+
+  ws.onerror = () => ws.close();
+}
+
+async function loadHistory() {
+  const teamID = document.getElementById('team-input').value.trim();
+  const errEl  = document.getElementById('history-error');
+  const tbl    = document.getElementById('tbl-history');
+  errEl.textContent = '';
+
+  if (!teamID) { errEl.textContent = 'enter a team ID'; return; }
+
+  try {
+    const res = await fetch('/api/teams/' + encodeURIComponent(teamID));
+    if (!res.ok) { errEl.textContent = 'not found'; tbl.style.display = 'none'; return; }
+    const data = await res.json();
+    const rows = (data.history || []).map(h => `<tr>
+      <td>${h.attempt}</td>
+      <td>${h.submission_id}</td>
+      <td>${h.language}</td>
+      <td>${score(h.composite_score)}</td>
+      <td>${num(h.peak_tps)}</td>
+      <td>${h.p99_us}</td>
+      <td>${pct(h.correctness)}</td>
+      <td>${h.completed_at.replace('T',' ').replace('Z','')}</td>
+    </tr>`);
+    if (rows.length === 0) {
+      errEl.textContent = 'no submissions for ' + teamID;
+      tbl.style.display = 'none';
+      return;
+    }
+    tbl.querySelector('tbody').innerHTML = rows.join('');
+    tbl.style.display = 'table';
+  } catch (_) {
+    errEl.textContent = 'request failed';
+  }
+}
+
+connect();
+</script>
+</body>
+</html>
