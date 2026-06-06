@@ -209,6 +209,15 @@ All notable changes to this project are documented here.
 
 ## June 5, 2026
 
+### Added
+- [DB schema](./internal/telemetry/schema.sql): TimescaleDB schema — `telemetry_events` hypertable (hypertime + latency distribution columns) and `run_scores` table (per-submission metrics with primary key on `submission_id`).
+- [DB ingester](./internal/telemetry/ingester.go): Kafka consumer that reads telemetry events from Redpanda, batch-inserts into TimescaleDB via `CopyFrom`, and computes `approx_percentile` latency on `__RUN_COMPLETE__` sentinel. Parses `submission_id` into `team_id`/`attempt` for `run_scores` upsert.
+- [ingester CLI](./cmd/ingester/main.go): `cmd/ingester` — standalone ingestion service. Flags: `--brokers`, `--topic`, `--dsn` (required). Runs until `SIGTERM`/`SIGINT`.
+- [leaderboard](./cmd/leaderboard/main.go): `cmd/leaderboard` — live leaderboard server backed by TimescaleDB. Polls `run_scores` every second, groups teams into tiers (systems/gc/interpreted), ranks by composite score with critical-flag demotion, and broadcasts via WebSocket. Serves team history at `/api/teams/{team_id}` and a live frontend at `/`.
+- [leaderboard frontend](./cmd/leaderboard/static/index.html): Dark-theme HTML/JS frontend with three tier tables, rank-change flash animations, WebSocket auto-reconnect, and a team history panel.
+- [API server](./cmd/api/main.go): Full submission pipeline — compile via Docker (`compiler.Compile`), start contestant sandbox (`runner.Sandbox.Start`), then run coordinator with `ContestantEndpoint`. Adds `--seccomp` flag. Failed steps set job status to `stateFailed`.
+- [go.mod](./go.mod): Added `github.com/jackc/pgx/v5` (PostgreSQL driver), `golang.org/x/sync` (indirect), and transitive pgx deps (`pgpassfile`, `pgservicefile`, `puddle/v2`).
+
 ### Fixed
 - [contestant](./cmd/contestant/main.go): Reduced per-connection engine arena from 1M to 16K (`NewEngine(1_000_000)` → `NewEngine(16_384)`). The multi-bot firer creates 200 bots per worker, resulting in 1000+ simultaneous WebSocket connections — each allocating a 1M arena caused OOM (~120 GB). 16K is sufficient for per-bot shards (~50 ticks each) and still safe for single-connection smoke test use.
 - [coordinator](./internal/coordinator/coordinator.go): `runSmokeTest` now returns an explicit error `"contestant died after N/M ticks"` when `TicksSent < len(ticks)`, instead of swallowing the runner's nil error.
