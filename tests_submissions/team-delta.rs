@@ -1,20 +1,25 @@
 use std::net::TcpListener;
+use std::net::TcpStream;
 use std::thread;
 use tungstenite::accept;
 use tungstenite::Message;
+use tungstenite::WebSocket;
 
 fn main() {
     let listener = TcpListener::bind("0.0.0.0:8080").unwrap();
     for stream in listener.incoming() {
         match stream {
-            Ok(s) => { thread::spawn(move || handle(s)); }
+            Ok(s) => {
+                s.set_nodelay(true).ok();
+                thread::spawn(move || handle(s));
+            }
             Err(_) => {}
         }
     }
 }
 
-fn handle<S: std::io::Read + std::io::Write>(stream: S) {
-    let mut ws = match accept(stream) {
+fn handle(stream: TcpStream) {
+    let mut ws: WebSocket<TcpStream> = match accept(stream) {
         Ok(w)  => w,
         Err(_) => return,
     };
@@ -22,14 +27,21 @@ fn handle<S: std::io::Read + std::io::Write>(stream: S) {
     let mut book = Book::new();
 
     loop {
-        let msg = match ws.read_message() {
+        let msg = match ws.read() {
             Ok(m)  => m,
             Err(_) => return,
         };
         let text = match msg {
             Message::Text(t)  => t,
-            Message::Close(_) => return,
-            _                 => continue,
+            Message::Close(_) => {
+                ws.close(None).ok();
+                return;
+            }
+            Message::Ping(d) => {
+                ws.send(Message::Pong(d)).ok();
+                continue;
+            }
+            _ => continue,
         };
         let parts: Vec<&str> = text.split_whitespace().collect();
         if parts.is_empty() { continue; }
@@ -45,16 +57,16 @@ fn handle<S: std::io::Read + std::io::Write>(stream: S) {
                 for f in &fills {
                     let line = format!("FILL {} {} {} {} {}",
                         id, f.maker, f.taker, fmt_price(f.price), f.qty);
-                    if ws.write_message(Message::Text(line)).is_err() { return; }
+                    if ws.send(Message::Text(line)).is_err() { return; }
                 }
-                if ws.write_message(Message::Text(format!("ACK {}", id))).is_err() { return; }
+                if ws.send(Message::Text(format!("ACK {}", id))).is_err() { return; }
             }
             "CAN" if parts.len() == 2 => {
                 let id = parts[1];
                 if book.cancel(id) {
-                    if ws.write_message(Message::Text(format!("ACK {}", id))).is_err() { return; }
+                    if ws.send(Message::Text(format!("ACK {}", id))).is_err() { return; }
                 } else {
-                    if ws.write_message(Message::Text(format!("REJ {} not_found", id))).is_err() { return; }
+                    if ws.send(Message::Text(format!("REJ {} not_found", id))).is_err() { return; }
                 }
             }
             _ => {}
@@ -62,12 +74,9 @@ fn handle<S: std::io::Read + std::io::Write>(stream: S) {
     }
 }
 
-// ── matching engine ───────────────────────────────────────────────────────────
-
 #[derive(Clone)]
 struct Order {
     id:     String,
-    side:   u8,
     otype:  u8,
     price:  i64,
     qty:    i64,
@@ -87,9 +96,9 @@ struct Fill {
 }
 
 struct Book {
-    bids:   Vec<Order>,
-    asks:   Vec<Order>,
-    seq:    i64,
+    bids: Vec<Order>,
+    asks: Vec<Order>,
+    seq:  i64,
 }
 
 impl Book {
@@ -98,21 +107,21 @@ impl Book {
     fn add(&mut self, id: &str, side: u8, otype: u8, price: i64, qty: i64) -> Vec<Fill> {
         self.seq += 1;
         let mut taker = Order {
-            id: id.to_string(), side, otype, price, qty, filled: 0, seq: self.seq,
+            id: id.to_string(), otype, price, qty, filled: 0, seq: self.seq,
         };
-        let mut fills = vec![];
+        let fills;
 
         if side == b'B' {
             fills = Self::match_orders(&mut taker, &mut self.asks,
                 |mp, tp, ot| if ot == b'M' { true } else { mp <= tp });
             if taker.remaining() > 0 && otype == b'L' {
-                Self::insert_sorted(&mut self.bids, taker.clone(), true);
+                Self::insert_sorted(&mut self.bids, taker, true);
             }
         } else {
             fills = Self::match_orders(&mut taker, &mut self.bids,
                 |mp, tp, ot| if ot == b'M' { true } else { mp >= tp });
             if taker.remaining() > 0 && otype == b'L' {
-                Self::insert_sorted(&mut self.asks, taker.clone(), false);
+                Self::insert_sorted(&mut self.asks, taker, false);
             }
         }
         fills
