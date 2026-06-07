@@ -1,0 +1,11 @@
+[package]
+name = "contestant"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "binary"
+path = "src/main.rs"
+
+[dependencies]
+tungstenite = "=0.24.0"

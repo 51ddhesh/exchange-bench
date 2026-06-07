@@ -19,9 +19,9 @@ import (
 	"github.com/51ddhesh/exchange-bench/internal/coordinator"
 	"github.com/51ddhesh/exchange-bench/internal/runner"
 	"github.com/51ddhesh/exchange-bench/internal/workload"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// validExtensions maps declared language to accepted file extensions.
 var validExtensions = map[string][]string{
 	"cpp":    {".cpp", ".cc", ".cxx"},
 	"rust":   {".rs"},
@@ -29,8 +29,6 @@ var validExtensions = map[string][]string{
 	"python": {".py"},
 	"zig":    {".zig"},
 }
-
-// ── job types ────────────────────────────────────────────────────────────────
 
 type jobState string
 
@@ -47,7 +45,7 @@ type job struct {
 	Attempt      int64
 	RunID        string
 	Language     string
-	SourcePath   string // path to uploaded source file; used by compiler in Step 1
+	SourcePath   string
 }
 
 type jobStatus struct {
@@ -59,7 +57,6 @@ type jobStatus struct {
 	State        jobState `json:"status"`
 	Error        string   `json:"error,omitempty"`
 
-	// populated when state == stateDone
 	TicksSent  int64   `json:"ticks_sent,omitempty"`
 	TicksAcked int64   `json:"ticks_acked,omitempty"`
 	PeakTPS    float64 `json:"peak_tps,omitempty"`
@@ -69,41 +66,46 @@ type jobStatus struct {
 	TimedOut   bool    `json:"timed_out,omitempty"`
 }
 
-// ── API server ───────────────────────────────────────────────────────────────
-
 type apiServer struct {
-	baseCfg     coordinator.Config // template; RunID + SubmissionID overridden per job
+	baseCfg     coordinator.Config
 	seed        int64
 	ticks       int
 	runTimeout  time.Duration
 	seccompPath string
+	db          *pgxpool.Pool // nil if --dsn not provided
 	jobCh       chan job
-	statuses    sync.Map   // submission_id → *jobStatus
-	attempts    sync.Map   // team_id        → *atomic.Int64
-	teamJobs    sync.Map   // team_id        → *[]string  (submission_ids, append-only)
-	mu          sync.Mutex // protects teamJobs appends
+	statuses    sync.Map
+	attempts    sync.Map
+	teamJobs    sync.Map
+	mu          sync.Mutex
 }
 
-func newAPIServer(baseCfg coordinator.Config, seed int64, ticks int, runTimeout time.Duration, queueDepth int, seccompPath string) *apiServer {
+func newAPIServer(
+	baseCfg coordinator.Config,
+	seed int64,
+	ticks int,
+	runTimeout time.Duration,
+	queueDepth int,
+	seccompPath string,
+	db *pgxpool.Pool,
+) *apiServer {
 	return &apiServer{
 		baseCfg:     baseCfg,
 		seed:        seed,
 		ticks:       ticks,
 		runTimeout:  runTimeout,
 		seccompPath: seccompPath,
+		db:          db,
 		jobCh:       make(chan job, queueDepth),
 	}
 }
 
-// nextSubmissionID atomically increments the attempt counter for teamID and
-// returns the new submission_id and attempt number.
 func (a *apiServer) nextSubmissionID(teamID string) (string, int64) {
 	val, _ := a.attempts.LoadOrStore(teamID, &atomic.Int64{})
 	n := val.(*atomic.Int64).Add(1)
 	return fmt.Sprintf("%s_%d", teamID, n), n
 }
 
-// recordTeamJob appends submissionID to the team's ordered history.
 func (a *apiServer) recordTeamJob(teamID, submissionID string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -112,7 +114,6 @@ func (a *apiServer) recordTeamJob(teamID, submissionID string) {
 	*list = append(*list, submissionID)
 }
 
-// startWorkers launches n goroutines that drain jobCh.
 func (a *apiServer) startWorkers(ctx context.Context, n int) {
 	for i := 0; i < n; i++ {
 		go a.worker(ctx)
@@ -120,10 +121,7 @@ func (a *apiServer) startWorkers(ctx context.Context, n int) {
 }
 
 func (a *apiServer) worker(ctx context.Context) {
-	// Pre-generate the tick slice once — same seed means same sequence.
-	// All workers share it read-only; workload.Generate is pure.
 	ticks := workload.Generate(a.seed, a.ticks)
-
 	for {
 		select {
 		case <-ctx.Done():
@@ -148,7 +146,7 @@ func (a *apiServer) runJob(ctx context.Context, j job, ticks []workload.Tick) {
 	if err != nil {
 		a.updateStatus(j.SubmissionID, func(s *jobStatus) {
 			s.State = stateFailed
-			s.Error = fmt.Sprintf("compile error: %s", compilerOutput)
+			s.Error = fmt.Sprintf("compile error: %v | output: %s", err, compilerOutput)
 		})
 		return
 	}
@@ -192,6 +190,8 @@ func (a *apiServer) runJob(ctx context.Context, j job, ticks []workload.Tick) {
 		return
 	}
 
+	a.upsertRunScore(ctx, j, metrics)
+
 	a.updateStatus(j.SubmissionID, func(s *jobStatus) {
 		s.State = stateDone
 		s.TicksSent = metrics.TicksSent
@@ -204,6 +204,46 @@ func (a *apiServer) runJob(ctx context.Context, j job, ticks []workload.Tick) {
 	})
 }
 
+func (a *apiServer) upsertRunScore(ctx context.Context, j job, metrics runner.RunMetrics) {
+	if a.db == nil {
+		return
+	}
+	correctness := float64(0)
+	if metrics.TicksSent > 0 {
+		correctness = float64(metrics.TicksCorrect) / float64(metrics.TicksSent)
+	}
+	_, err := a.db.Exec(ctx, `
+		INSERT INTO run_scores
+			(submission_id, team_id, attempt, run_id, language,
+			 ticks_sent, ticks_acked, peak_tps, capacity_tps,
+			 correctness, completed_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())
+		ON CONFLICT (submission_id) DO UPDATE SET
+			run_id       = EXCLUDED.run_id,
+			language     = EXCLUDED.language,
+			ticks_sent   = EXCLUDED.ticks_sent,
+			ticks_acked  = EXCLUDED.ticks_acked,
+			peak_tps     = EXCLUDED.peak_tps,
+			capacity_tps = EXCLUDED.capacity_tps,
+			correctness  = EXCLUDED.correctness,
+			completed_at = EXCLUDED.completed_at
+	`,
+		j.SubmissionID,
+		j.TeamID,
+		j.Attempt,
+		j.RunID,
+		j.Language,
+		metrics.TicksSent,
+		metrics.TicksAcked,
+		metrics.PeakTPS,
+		metrics.CapacityTPS,
+		correctness,
+	)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[api] upsert run_scores %s: %v\n", j.SubmissionID, err)
+	}
+}
+
 func (a *apiServer) updateStatus(submissionID string, fn func(*jobStatus)) {
 	val, ok := a.statuses.Load(submissionID)
 	if !ok {
@@ -214,8 +254,6 @@ func (a *apiServer) updateStatus(submissionID string, fn func(*jobStatus)) {
 
 // ── HTTP handlers ─────────────────────────────────────────────────────────────
 
-// POST /submissions
-// Body: multipart/form-data with fields: team_id, language, source (file)
 func (a *apiServer) handleSubmit(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -314,7 +352,6 @@ func (a *apiServer) handleSubmit(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(status) //nolint:errcheck
 }
 
-// GET /submissions/{submission_id}
 func (a *apiServer) handleGetSubmission(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -337,7 +374,6 @@ func (a *apiServer) handleGetSubmission(w http.ResponseWriter, r *http.Request) 
 	json.NewEncoder(w).Encode(val.(*jobStatus)) //nolint:errcheck
 }
 
-// GET /teams/{team_id}/submissions
 func (a *apiServer) handleTeamSubmissions(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -354,10 +390,10 @@ func (a *apiServer) handleTeamSubmissions(w http.ResponseWriter, r *http.Request
 	val, ok := a.teamJobs.Load(teamID)
 	if !ok {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{ //nolint:errcheck
+		json.NewEncoder(w).Encode(map[string]any{
 			"team_id":     teamID,
 			"submissions": []any{},
-		})
+		}) //nolint:errcheck
 		return
 	}
 
@@ -366,7 +402,6 @@ func (a *apiServer) handleTeamSubmissions(w http.ResponseWriter, r *http.Request
 	copy(ids, *val.(*[]string))
 	a.mu.Unlock()
 
-	// Reverse: most recent attempt first.
 	for i, j := 0, len(ids)-1; i < j; i, j = i+1, j-1 {
 		ids[i], ids[j] = ids[j], ids[i]
 	}
@@ -379,19 +414,17 @@ func (a *apiServer) handleTeamSubmissions(w http.ResponseWriter, r *http.Request
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{ //nolint:errcheck
+	json.NewEncoder(w).Encode(map[string]any{
 		"team_id":     teamID,
 		"submissions": submissions,
-	})
+	}) //nolint:errcheck
 }
 
-// GET /health
 func handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("ok")) //nolint:errcheck
 }
 
-// extValid reports whether ext is in the allowed list.
 func extValid(allowed []string, ext string) bool {
 	for _, e := range allowed {
 		if e == ext {
@@ -399,6 +432,13 @@ func extValid(allowed []string, ext string) bool {
 		}
 	}
 	return false
+}
+
+func parseBrokers(s string) []string {
+	if s == "" {
+		return nil
+	}
+	return strings.Split(s, ",")
 }
 
 // ── main ──────────────────────────────────────────────────────────────────────
@@ -409,13 +449,16 @@ func main() {
 	image := flag.String("image", "", "Docker image for contestant sandbox")
 	pool := flag.Int("pool", 5, "max concurrent benchmark runs")
 	queueDepth := flag.Int("queue-depth", 100, "max queued submissions")
-	seccomp := flag.String("seccomp", "deployments/docker/seccomp/contestant.json", "seccomp profile path")
 	seed := flag.Int64("seed", 42, "workload RNG seed")
 	ticks := flag.Int("ticks", 100_000, "ticks per benchmark run")
 	initRate := flag.Int("init-rate", 1_000, "starting rate per worker (ticks/sec)")
 	maxRate := flag.Int("max-rate", 50_000, "rate cap per worker (ticks/sec)")
 	ramp := flag.Duration("ramp", 5*time.Second, "ramp interval")
 	timeout := flag.Duration("timeout", 300*time.Second, "per-run wall-clock timeout")
+	seccomp := flag.String("seccomp", "deployments/docker/seccomp/contestant.json", "seccomp profile path")
+	dsn := flag.String("dsn", "", "TimescaleDB connection string (optional, enables score writes)")
+	redpandaBrokers := flag.String("redpanda-brokers", "", "comma-separated Redpanda broker addresses (empty = skip telemetry)")
+	redpandaTopic := flag.String("redpanda-topic", "telemetry-events", "Redpanda topic for telemetry events")
 	flag.Parse()
 
 	if *image == "" {
@@ -424,16 +467,29 @@ func main() {
 		os.Exit(1)
 	}
 
-	addrs := strings.Split(*workers, ",")
-	baseCfg := coordinator.Config{
-		WorkerAddrs:  addrs,
-		Image:        *image,
-		InitialRate:  *initRate,
-		MaxRate:      *maxRate,
-		RampInterval: *ramp,
+	var db *pgxpool.Pool
+	if *dsn != "" {
+		var err error
+		db, err = pgxpool.New(context.Background(), *dsn)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "api: db: %v\n", err)
+			os.Exit(1)
+		}
+		defer db.Close()
 	}
 
-	srv := newAPIServer(baseCfg, *seed, *ticks, *timeout, *queueDepth, *seccomp)
+	addrs := strings.Split(*workers, ",")
+	baseCfg := coordinator.Config{
+		WorkerAddrs:     addrs,
+		Image:           *image,
+		InitialRate:     *initRate,
+		MaxRate:         *maxRate,
+		RampInterval:    *ramp,
+		RedpandaBrokers: parseBrokers(*redpandaBrokers),
+		RedpandaTopic:   *redpandaTopic,
+	}
+
+	srv := newAPIServer(baseCfg, *seed, *ticks, *timeout, *queueDepth, *seccomp, db)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

@@ -211,11 +211,11 @@ func (c *Coordinator) Run(ctx context.Context, ticks []workload.Tick) (runner.Ru
 	// ── Telemetry fan-in + PeakTPS detection ─────────────────────────────────
 	// Count ACKs in 1-second windows. Two consecutive windows where
 	// ackRate < sendRate*0.95 = saturation. PeakTPS = highest window before that.
-	var peakTPS float64
+	var peakTPS, capacityTPS float64
 	var correctCount int64
 	var consecBelow int
 	windowStart := time.Now()
-	var windowAcks int64
+	var windowAcks, windowTotal, windowCorrect int64
 	satOnce := sync.Once{}
 
 	for evt := range telemetryCh {
@@ -225,28 +225,34 @@ func (c *Coordinator) Run(ctx context.Context, ticks []workload.Tick) (runner.Ru
 		if producerCh != nil {
 			select {
 			case producerCh <- evt:
-			default: // drop on full — telemetry is best-effort
+			default:
 			}
 		}
 
+		windowTotal++
 		if evt.Acked {
 			windowAcks++
 		}
-
 		if evt.Violation == "" {
 			correctCount++
+			windowCorrect++
 		}
 
 		if time.Since(windowStart) >= time.Second {
 			ackRate := float64(windowAcks)
 			sendRate := float64(currentRate.Load())
 
-			// Always track highest ACK rate seen.
 			if ackRate > peakTPS {
 				peakTPS = ackRate
 			}
 
-			// Saturation: two consecutive windows below 95% of send rate.
+			if windowTotal > 0 {
+				windowCorrectness := float64(windowCorrect) / float64(windowTotal)
+				if windowCorrectness >= 0.95 && ackRate > capacityTPS {
+					capacityTPS = ackRate
+				}
+			}
+
 			if ackRate < sendRate*0.95 {
 				consecBelow++
 				if consecBelow >= 2 {
@@ -257,6 +263,8 @@ func (c *Coordinator) Run(ctx context.Context, ticks []workload.Tick) (runner.Ru
 			}
 
 			windowAcks = 0
+			windowTotal = 0
+			windowCorrect = 0
 			windowStart = time.Now()
 		}
 	}
@@ -296,6 +304,7 @@ func (c *Coordinator) Run(ctx context.Context, ticks []workload.Tick) (runner.Ru
 
 	result := merge(workerMetrics)
 	result.PeakTPS = peakTPS
+	result.CapacityTPS = capacityTPS
 	result.TicksCorrect = correctCount
 	return result, nil
 }
