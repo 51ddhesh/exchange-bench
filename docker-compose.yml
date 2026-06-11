@@ -1,0 +1,206 @@
+name: exchange-bench
+
+services:
+
+  redpanda:
+    image: redpandadata/redpanda:v24.1.1
+    command:
+      - redpanda
+      - start
+      - --overprovisioned
+      - --smp=1
+      - --memory=512M
+      - --reserve-memory=0M
+      - --node-id=0
+      - --check=false
+      - --kafka-addr=PLAINTEXT://0.0.0.0:29092,OUTSIDE://0.0.0.0:19092
+      - --advertise-kafka-addr=PLAINTEXT://localhost:29092,OUTSIDE://localhost:19092
+    ports:
+      - "19092:19092"
+      - "29092:29092"
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster health | grep -E 'Healthy:.+true' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redpanda-init:
+    image: redpandadata/redpanda:v24.1.1
+    pull_policy: never
+    depends_on:
+      redpanda:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["rpk topic create telemetry-events --brokers localhost:29092 --partitions 10 --replicas 1 || true"]
+    network_mode: host
+    restart: "no"
+
+  timescaledb:
+    image: timescale/timescaledb-ha:pg16
+    pull_policy: never
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: postgres
+    volumes:
+      - timescaledb-data:/home/postgres/pgdata/data
+      - ./internal/telemetry/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  worker-0:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    image: exchange-bench-worker
+    network_mode: host
+    environment:
+      - DOCKER_HOST=unix:///var/run/docker.sock
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+    volumes:
+      - /run/user/1000/docker.sock:/var/run/docker.sock
+    command:
+      - --listen=:9090
+      - --worker-id=worker-0
+      - --seccomp=deployments/docker/seccomp/contestant.json
+    restart: unless-stopped
+
+  worker-1:
+    image: exchange-bench-worker
+    pull_policy: never
+    network_mode: host
+    environment:
+      - DOCKER_HOST=unix:///var/run/docker.sock
+    depends_on:
+      - worker-0
+    volumes:
+      - /run/user/1000/docker.sock:/var/run/docker.sock
+    command:
+      - --listen=:9091
+      - --worker-id=worker-1
+      - --seccomp=deployments/docker/seccomp/contestant.json
+    restart: unless-stopped
+
+  worker-2:
+    image: exchange-bench-worker
+    pull_policy: never
+    network_mode: host
+    environment:
+      - DOCKER_HOST=unix:///var/run/docker.sock
+    depends_on:
+      - worker-0
+    volumes:
+      - /run/user/1000/docker.sock:/var/run/docker.sock
+    command:
+      - --listen=:9092
+      - --worker-id=worker-2
+      - --seccomp=deployments/docker/seccomp/contestant.json
+    restart: unless-stopped
+
+  worker-3:
+    image: exchange-bench-worker
+    pull_policy: never
+    network_mode: host
+    environment:
+      - DOCKER_HOST=unix:///var/run/docker.sock
+    depends_on:
+      - worker-0
+    volumes:
+      - /run/user/1000/docker.sock:/var/run/docker.sock
+    command:
+      - --listen=:9093
+      - --worker-id=worker-3
+      - --seccomp=deployments/docker/seccomp/contestant.json
+    restart: unless-stopped
+
+  worker-4:
+    image: exchange-bench-worker
+    pull_policy: never
+    network_mode: host
+    environment:
+      - DOCKER_HOST=unix:///var/run/docker.sock
+    depends_on:
+      - worker-0
+    volumes:
+      - /run/user/1000/docker.sock:/var/run/docker.sock
+    command:
+      - --listen=:9094
+      - --worker-id=worker-4
+      - --seccomp=deployments/docker/seccomp/contestant.json
+    restart: unless-stopped
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    image: exchange-bench-api
+    network_mode: host
+    environment:
+      - DOCKER_HOST=unix:///var/run/docker.sock
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+      redpanda:
+        condition: service_healthy
+      redpanda-init:
+        condition: service_completed_successfully
+      worker-0:
+        condition: service_started
+    volumes:
+      - /run/user/1000/docker.sock:/var/run/docker.sock
+      - /tmp/exchange-bench:/tmp/exchange-bench
+    command:
+      - --listen=:8081
+      - --workers=localhost:9090,localhost:9091,localhost:9092,localhost:9093,localhost:9094
+      - --image=exchange-bench-contestant
+      - --seccomp=deployments/docker/seccomp/contestant.json
+      - --ticks=10000
+      - --init-rate=200
+      - --max-rate=5000
+      - --redpanda-brokers=localhost:19092
+      - --redpanda-topic=telemetry-events
+      - --dsn=postgres://postgres:password@localhost:5432/postgres
+    restart: unless-stopped
+
+  ingester:
+    build:
+      context: .
+      dockerfile: Dockerfile.ingester
+    image: exchange-bench-ingester
+    network_mode: host
+    depends_on:
+      redpanda:
+        condition: service_healthy
+      redpanda-init:
+        condition: service_completed_successfully
+      timescaledb:
+        condition: service_healthy
+    command:
+      - --brokers=localhost:19092
+      - --topic=telemetry-events
+      - --dsn=postgres://postgres:password@localhost:5432/postgres
+    restart: unless-stopped
+
+  leaderboard:
+    build:
+      context: .
+      dockerfile: Dockerfile.leaderboard
+    image: exchange-bench-leaderboard
+    network_mode: host
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+    command:
+      - --listen=:8080
+      - --dsn=postgres://postgres:password@localhost:5432/postgres
+    restart: unless-stopped
+
+volumes:
+  timescaledb-data:

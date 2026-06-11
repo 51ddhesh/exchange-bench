@@ -5,31 +5,38 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libssl-dev \
     libboost-all-dev \
     rustc \
-    golang-go \
+    cargo \
     python3 \
     python3-pip \
     wget \
     xz-utils \
     ca-certificates \
+    curl \
     && pip3 install websockets --break-system-packages \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Zig — not available via apt on Ubuntu 24.04.
-# ARG ZIG_VERSION=0.13.0
-# RUN wget -q https://ziglang.org/download/${ZIG_VERSION}/zig-linux-x86_64-${ZIG_VERSION}.tar.xz \
-#     && tar -xf zig-linux-x86_64-${ZIG_VERSION}.tar.xz \
-#     && mv zig-linux-x86_64-${ZIG_VERSION} /opt/zig \
-#     && ln -s /opt/zig/zig /usr/local/bin/zig \
-#     && rm zig-linux-x86_64-${ZIG_VERSION}.tar.xz
+# Install Go 1.26.3 directly from go.dev.
+RUN curl -fsSL https://go.dev/dl/go1.26.3.linux-amd64.tar.gz \
+    | tar -C /usr/local -xz
+ENV PATH="/usr/local/go/bin:${PATH}"
 
-# Build-tool cache dirs that land in tmpfs at runtime (injected via
-# --tmpfs=/tmp:size=512m in the docker run call from compiler.go).
 ENV GOPATH=/tmp/go
 ENV GOCACHE=/tmp/gocache
-# ENV ZIG_GLOBAL_CACHE_DIR=/tmp/zig-cache
+
+# Warmup: pre-download github.com/coder/websocket for Go submissions.
+RUN GOPATH=/root/go GOCACHE=/root/gocache GOPROXY=https://proxy.golang.org \
+    go install github.com/coder/websocket@v1.8.14 2>/dev/null || true
+RUN GOPATH=/root/go ls /root/go/pkg/mod/cache/download/github.com/coder/websocket/@v/
+
+# Warmup: pre-download tungstenite for Rust submissions.
+RUN mkdir -p /tmp/warmup-rs/src \
+    && printf '[package]\nname = "warmup"\nversion = "0.1.0"\nedition = "2021"\n[[bin]]\nname = "warmup"\npath = "src/main.rs"\n[dependencies]\ntungstenite = "=0.24.0"\n' \
+       > /tmp/warmup-rs/Cargo.toml \
+    && echo 'fn main() {}' > /tmp/warmup-rs/src/main.rs \
+    && cd /tmp/warmup-rs \
+    && CARGO_HOME=/root/.cargo cargo fetch \
+    && rm -rf /tmp/warmup-rs
 
 # uWebSockets header for C++ contestants.
-# Replace deployments/docker/uws.h with the real header before building:
-#   https://github.com/uNetworking/uWebSockets
 COPY deployments/docker/uws.h /usr/local/include/uws.h

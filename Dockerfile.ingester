@@ -1,0 +1,13 @@
+FROM golang:1.26.3-bookworm AS build
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN go build -o /ingester ./cmd/ingester
+
+FROM debian:bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+COPY --from=build /ingester /ingester
+ENTRYPOINT ["/ingester"]
