@@ -3,9 +3,16 @@ package botworker
 import (
 	"context"
 	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 
 	proto "github.com/51ddhesh/exchange-bench/internal/coordinator/proto"
+	"github.com/51ddhesh/exchange-bench/internal/runner"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 )
 
 type runState int
@@ -26,10 +33,77 @@ type workerServer struct {
 	workerID string
 	seccomp  string // retained for future sandbox use; not forwarded to firer
 	f        *firer
+
+	s3Client *s3.Client
+	s3Bucket string
+	sb       runner.Sandbox
 }
 
-func NewWorkerServer(workerID, seccomp string) *workerServer {
-	return &workerServer{workerID: workerID, seccomp: seccomp}
+func NewWorkerServer(workerID, seccomp string, s3Client *s3.Client) *workerServer {
+	return &workerServer{
+		workerID: workerID, 
+		seccomp:  seccomp,
+		s3Client: s3Client,
+		s3Bucket: os.Getenv("S3_BUCKET"),
+	}
+}
+
+func (w *workerServer) StartSandbox(ctx context.Context, req *proto.StartSandboxRequest) (*proto.StartSandboxResponse, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	// Clean up previous sandbox if exists
+	if w.sb != nil {
+		w.sb.Kill()
+		w.sb = nil
+	}
+
+	baseTmp := os.Getenv("WORKER_TMP_DIR")
+	if baseTmp == "" {
+		baseTmp = "/tmp"
+	}
+	workDir := filepath.Join(baseTmp, req.RunId)
+	os.MkdirAll(workDir, 0755)
+
+	localBinPath := filepath.Join(workDir, "binary")
+	f, err := os.Create(localBinPath)
+	if err != nil {
+		return &proto.StartSandboxResponse{Error: fmt.Sprintf("create binary file: %v", err)}, nil
+	}
+	if strings.HasPrefix(req.BinaryS3Key, "file://") {
+		localSourcePath := strings.TrimPrefix(req.BinaryS3Key, "file://")
+		src, err := os.Open(localSourcePath)
+		if err != nil {
+			f.Close()
+			return &proto.StartSandboxResponse{Error: fmt.Sprintf("open local binary: %v", err)}, nil
+		}
+		io.Copy(f, src)
+		src.Close()
+		f.Close()
+	} else {
+		out, err := w.s3Client.GetObject(ctx, &s3.GetObjectInput{
+			Bucket: aws.String(w.s3Bucket),
+			Key:    aws.String(req.BinaryS3Key),
+		})
+		if err != nil {
+			f.Close()
+			return &proto.StartSandboxResponse{Error: fmt.Sprintf("download binary: %v", err)}, nil
+		}
+		
+		io.Copy(f, out.Body)
+		f.Close()
+		out.Body.Close()
+	}
+
+	os.Chmod(localBinPath, 0755)
+
+	sb := runner.NewSandbox(w.seccomp)
+	if err := sb.Start(ctx, localBinPath, req.Language); err != nil {
+		return &proto.StartSandboxResponse{Error: fmt.Sprintf("start sandbox: %v", err)}, nil
+	}
+
+	w.sb = sb
+	return &proto.StartSandboxResponse{Endpoint: sb.Endpoint()}, nil
 }
 
 func (w *workerServer) Prepare(ctx context.Context, req *proto.PrepareRequest) (*proto.PrepareResponse, error) {

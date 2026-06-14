@@ -61,9 +61,21 @@ message CollectRequest {
     string run_id = 1;
 }
 
+message StartSandboxRequest {
+    string run_id          = 1;
+    string binary_s3_key   = 2;
+    string language        = 3;
+}
+
+message StartSandboxResponse {
+    string endpoint = 1;
+    string error    = 2;
+}
+
 service WorkerService {
     rpc Prepare(PrepareRequest)         returns (PrepareResponse);
     rpc Fire(FireRequest)               returns (stream TelemetryEvent);
     rpc SetRate(SetRateRequest)         returns (SetRateResponse);
     rpc CollectMetrics(CollectRequest)  returns (WorkerMetrics);
+    rpc StartSandbox(StartSandboxRequest) returns (StartSandboxResponse);
 }

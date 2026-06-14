@@ -609,6 +609,118 @@ func (x *CollectRequest) GetRunId() string {
 	return ""
 }
 
+type StartSandboxRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	RunId         string                 `protobuf:"bytes,1,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
+	BinaryS3Key   string                 `protobuf:"bytes,2,opt,name=binary_s3_key,json=binaryS3Key,proto3" json:"binary_s3_key,omitempty"`
+	Language      string                 `protobuf:"bytes,3,opt,name=language,proto3" json:"language,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *StartSandboxRequest) Reset() {
+	*x = StartSandboxRequest{}
+	mi := &file_internal_coordinator_proto_coordinator_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *StartSandboxRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*StartSandboxRequest) ProtoMessage() {}
+
+func (x *StartSandboxRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_internal_coordinator_proto_coordinator_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use StartSandboxRequest.ProtoReflect.Descriptor instead.
+func (*StartSandboxRequest) Descriptor() ([]byte, []int) {
+	return file_internal_coordinator_proto_coordinator_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *StartSandboxRequest) GetRunId() string {
+	if x != nil {
+		return x.RunId
+	}
+	return ""
+}
+
+func (x *StartSandboxRequest) GetBinaryS3Key() string {
+	if x != nil {
+		return x.BinaryS3Key
+	}
+	return ""
+}
+
+func (x *StartSandboxRequest) GetLanguage() string {
+	if x != nil {
+		return x.Language
+	}
+	return ""
+}
+
+type StartSandboxResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Endpoint      string                 `protobuf:"bytes,1,opt,name=endpoint,proto3" json:"endpoint,omitempty"`
+	Error         string                 `protobuf:"bytes,2,opt,name=error,proto3" json:"error,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *StartSandboxResponse) Reset() {
+	*x = StartSandboxResponse{}
+	mi := &file_internal_coordinator_proto_coordinator_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *StartSandboxResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*StartSandboxResponse) ProtoMessage() {}
+
+func (x *StartSandboxResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_internal_coordinator_proto_coordinator_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use StartSandboxResponse.ProtoReflect.Descriptor instead.
+func (*StartSandboxResponse) Descriptor() ([]byte, []int) {
+	return file_internal_coordinator_proto_coordinator_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *StartSandboxResponse) GetEndpoint() string {
+	if x != nil {
+		return x.Endpoint
+	}
+	return ""
+}
+
+func (x *StartSandboxResponse) GetError() string {
+	if x != nil {
+		return x.Error
+	}
+	return ""
+}
+
 var File_internal_coordinator_proto_coordinator_proto protoreflect.FileDescriptor
 
 const file_internal_coordinator_proto_coordinator_proto_rawDesc = "" +
@@ -659,12 +771,20 @@ const file_internal_coordinator_proto_coordinator_proto_rawDesc = "" +
 	"ratePerSec\"\x11\n" +
 	"\x0fSetRateResponse\"'\n" +
 	"\x0eCollectRequest\x12\x15\n" +
-	"\x06run_id\x18\x01 \x01(\tR\x05runId2\xa7\x02\n" +
+	"\x06run_id\x18\x01 \x01(\tR\x05runId\"l\n" +
+	"\x13StartSandboxRequest\x12\x15\n" +
+	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12\"\n" +
+	"\rbinary_s3_key\x18\x02 \x01(\tR\vbinaryS3Key\x12\x1a\n" +
+	"\blanguage\x18\x03 \x01(\tR\blanguage\"H\n" +
+	"\x14StartSandboxResponse\x12\x1a\n" +
+	"\bendpoint\x18\x01 \x01(\tR\bendpoint\x12\x14\n" +
+	"\x05error\x18\x02 \x01(\tR\x05error2\xfc\x02\n" +
 	"\rWorkerService\x12D\n" +
 	"\aPrepare\x12\x1b.coordinator.PrepareRequest\x1a\x1c.coordinator.PrepareResponse\x12?\n" +
 	"\x04Fire\x12\x18.coordinator.FireRequest\x1a\x1b.coordinator.TelemetryEvent0\x01\x12D\n" +
 	"\aSetRate\x12\x1b.coordinator.SetRateRequest\x1a\x1c.coordinator.SetRateResponse\x12I\n" +
-	"\x0eCollectMetrics\x12\x1b.coordinator.CollectRequest\x1a\x1a.coordinator.WorkerMetricsB?Z=github.com/51ddhesh/exchange-bench/internal/coordinator/protob\x06proto3"
+	"\x0eCollectMetrics\x12\x1b.coordinator.CollectRequest\x1a\x1a.coordinator.WorkerMetrics\x12S\n" +
+	"\fStartSandbox\x12 .coordinator.StartSandboxRequest\x1a!.coordinator.StartSandboxResponseB?Z=github.com/51ddhesh/exchange-bench/internal/coordinator/protob\x06proto3"
 
 var (
 	file_internal_coordinator_proto_coordinator_proto_rawDescOnce sync.Once
@@ -678,33 +798,37 @@ func file_internal_coordinator_proto_coordinator_proto_rawDescGZIP() []byte {
 	return file_internal_coordinator_proto_coordinator_proto_rawDescData
 }
 
-var file_internal_coordinator_proto_coordinator_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
+var file_internal_coordinator_proto_coordinator_proto_msgTypes = make([]protoimpl.MessageInfo, 11)
 var file_internal_coordinator_proto_coordinator_proto_goTypes = []any{
-	(*Tick)(nil),            // 0: coordinator.Tick
-	(*WorkerMetrics)(nil),   // 1: coordinator.WorkerMetrics
-	(*PrepareRequest)(nil),  // 2: coordinator.PrepareRequest
-	(*PrepareResponse)(nil), // 3: coordinator.PrepareResponse
-	(*FireRequest)(nil),     // 4: coordinator.FireRequest
-	(*TelemetryEvent)(nil),  // 5: coordinator.TelemetryEvent
-	(*SetRateRequest)(nil),  // 6: coordinator.SetRateRequest
-	(*SetRateResponse)(nil), // 7: coordinator.SetRateResponse
-	(*CollectRequest)(nil),  // 8: coordinator.CollectRequest
+	(*Tick)(nil),                 // 0: coordinator.Tick
+	(*WorkerMetrics)(nil),        // 1: coordinator.WorkerMetrics
+	(*PrepareRequest)(nil),       // 2: coordinator.PrepareRequest
+	(*PrepareResponse)(nil),      // 3: coordinator.PrepareResponse
+	(*FireRequest)(nil),          // 4: coordinator.FireRequest
+	(*TelemetryEvent)(nil),       // 5: coordinator.TelemetryEvent
+	(*SetRateRequest)(nil),       // 6: coordinator.SetRateRequest
+	(*SetRateResponse)(nil),      // 7: coordinator.SetRateResponse
+	(*CollectRequest)(nil),       // 8: coordinator.CollectRequest
+	(*StartSandboxRequest)(nil),  // 9: coordinator.StartSandboxRequest
+	(*StartSandboxResponse)(nil), // 10: coordinator.StartSandboxResponse
 }
 var file_internal_coordinator_proto_coordinator_proto_depIdxs = []int32{
-	0, // 0: coordinator.PrepareRequest.ticks:type_name -> coordinator.Tick
-	2, // 1: coordinator.WorkerService.Prepare:input_type -> coordinator.PrepareRequest
-	4, // 2: coordinator.WorkerService.Fire:input_type -> coordinator.FireRequest
-	6, // 3: coordinator.WorkerService.SetRate:input_type -> coordinator.SetRateRequest
-	8, // 4: coordinator.WorkerService.CollectMetrics:input_type -> coordinator.CollectRequest
-	3, // 5: coordinator.WorkerService.Prepare:output_type -> coordinator.PrepareResponse
-	5, // 6: coordinator.WorkerService.Fire:output_type -> coordinator.TelemetryEvent
-	7, // 7: coordinator.WorkerService.SetRate:output_type -> coordinator.SetRateResponse
-	1, // 8: coordinator.WorkerService.CollectMetrics:output_type -> coordinator.WorkerMetrics
-	5, // [5:9] is the sub-list for method output_type
-	1, // [1:5] is the sub-list for method input_type
-	1, // [1:1] is the sub-list for extension type_name
-	1, // [1:1] is the sub-list for extension extendee
-	0, // [0:1] is the sub-list for field type_name
+	0,  // 0: coordinator.PrepareRequest.ticks:type_name -> coordinator.Tick
+	2,  // 1: coordinator.WorkerService.Prepare:input_type -> coordinator.PrepareRequest
+	4,  // 2: coordinator.WorkerService.Fire:input_type -> coordinator.FireRequest
+	6,  // 3: coordinator.WorkerService.SetRate:input_type -> coordinator.SetRateRequest
+	8,  // 4: coordinator.WorkerService.CollectMetrics:input_type -> coordinator.CollectRequest
+	9,  // 5: coordinator.WorkerService.StartSandbox:input_type -> coordinator.StartSandboxRequest
+	3,  // 6: coordinator.WorkerService.Prepare:output_type -> coordinator.PrepareResponse
+	5,  // 7: coordinator.WorkerService.Fire:output_type -> coordinator.TelemetryEvent
+	7,  // 8: coordinator.WorkerService.SetRate:output_type -> coordinator.SetRateResponse
+	1,  // 9: coordinator.WorkerService.CollectMetrics:output_type -> coordinator.WorkerMetrics
+	10, // 10: coordinator.WorkerService.StartSandbox:output_type -> coordinator.StartSandboxResponse
+	6,  // [6:11] is the sub-list for method output_type
+	1,  // [1:6] is the sub-list for method input_type
+	1,  // [1:1] is the sub-list for extension type_name
+	1,  // [1:1] is the sub-list for extension extendee
+	0,  // [0:1] is the sub-list for field type_name
 }
 
 func init() { file_internal_coordinator_proto_coordinator_proto_init() }
@@ -718,7 +842,7 @@ func file_internal_coordinator_proto_coordinator_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_internal_coordinator_proto_coordinator_proto_rawDesc), len(file_internal_coordinator_proto_coordinator_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   9,
+			NumMessages:   11,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
