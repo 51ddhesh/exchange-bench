@@ -3,6 +3,7 @@ variable "vpc_id" {}
 variable "subnet_id" {}
 variable "instance_type" {}
 variable "security_group_id" {}
+variable "subnet_cidr" {}
 variable "db_password" { sensitive = true }
 variable "schema_sql" { description = "Contents of schema.sql, passed from root module" }
 
@@ -42,11 +43,18 @@ resource "aws_iam_instance_profile" "timescaledb" {
 }
 
 resource "aws_instance" "timescaledb" {
-  ami                    = data.aws_ami.ubuntu.id
-  instance_type          = var.instance_type
-  subnet_id              = var.subnet_id
-  vpc_security_group_ids = [var.security_group_id]
-  iam_instance_profile   = aws_iam_instance_profile.timescaledb.name
+  ami                         = data.aws_ami.ubuntu.id
+  instance_type               = var.instance_type
+  subnet_id                   = var.subnet_id
+  private_ip                  = cidrhost(var.subnet_cidr, 60)
+  vpc_security_group_ids      = [var.security_group_id]
+  iam_instance_profile        = aws_iam_instance_profile.timescaledb.name
+  user_data_replace_on_change = true
+
+  root_block_device {
+    volume_size = 20
+    volume_type = "gp3"
+  }
 
   user_data = <<-EOF
     #!/bin/bash

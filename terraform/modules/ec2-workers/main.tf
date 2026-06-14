@@ -12,6 +12,7 @@ variable "ecr_contestant_url" {}
 variable "aws_region" {}
 variable "redpanda_ip" {}
 variable "timescaledb_ip" {}
+variable "subnet_cidrs" {}
 variable "alb_target_api_arn" {}
 variable "db_password" { sensitive = true }
 
@@ -77,12 +78,14 @@ resource "aws_iam_instance_profile" "worker" {
 
 # Workers 1-4: plain workers, no api
 resource "aws_instance" "workers" {
-  count                  = var.worker_count - 1
-  ami                    = data.aws_ami.ubuntu.id
-  instance_type          = var.instance_type
-  subnet_id              = var.subnet_ids[(count.index + 1) % length(var.subnet_ids)]
-  vpc_security_group_ids = [var.security_group_id]
-  iam_instance_profile   = aws_iam_instance_profile.worker.name
+  count                       = var.worker_count - 1
+  ami                         = data.aws_ami.ubuntu.id
+  instance_type               = var.instance_type
+  subnet_id                   = var.subnet_ids[(count.index + 1) % length(var.subnet_ids)]
+  private_ip                  = cidrhost(var.subnet_cidrs[(count.index + 1) % length(var.subnet_cidrs)], 100 + count.index + 1)
+  vpc_security_group_ids      = [var.security_group_id]
+  iam_instance_profile        = aws_iam_instance_profile.worker.name
+  user_data_replace_on_change = true
 
   user_data = <<-EOF
     #!/bin/bash
@@ -138,16 +141,18 @@ locals {
   other_worker_ips  = aws_instance.workers[*].private_ip
   worker_grpc_addrs = join(",", concat(
     ["localhost:9090"],
-    [for i, ip in local.other_worker_ips : "${ip}:${9091 + i}"]
+    [for ip in local.other_worker_ips : "${ip}:9090"]
   ))
 }
 
 resource "aws_instance" "worker0" {
-  ami                    = data.aws_ami.ubuntu.id
-  instance_type          = var.instance_type
-  subnet_id              = var.subnet_ids[0]
-  vpc_security_group_ids = [var.security_group_id]
-  iam_instance_profile   = aws_iam_instance_profile.worker.name
+  ami                         = data.aws_ami.ubuntu.id
+  instance_type               = var.instance_type
+  subnet_id                   = var.subnet_ids[0]
+  private_ip                  = cidrhost(var.subnet_cidrs[0], 100)
+  vpc_security_group_ids      = [var.security_group_id]
+  iam_instance_profile        = aws_iam_instance_profile.worker.name
+  user_data_replace_on_change = true
 
   depends_on = [aws_instance.workers]
 
@@ -208,7 +213,7 @@ resource "aws_instance" "worker0" {
       --workers=${local.worker_grpc_addrs} \
       --image=exchange-bench-contestant \
       --seccomp=deployments/docker/seccomp/contestant.json \
-      --ticks=10000 \
+      --ticks=1000000 \
       --init-rate=200 \
       --max-rate=5000 \
       --redpanda-brokers=${var.redpanda_ip}:9092 \

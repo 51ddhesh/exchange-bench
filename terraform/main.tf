@@ -35,6 +35,7 @@ module "redpanda" {
   project           = var.project
   vpc_id            = module.vpc.vpc_id
   subnet_id         = module.vpc.private_subnet_ids[0]
+  subnet_cidr       = module.vpc.private_subnet_cidrs[0]
   instance_type     = var.infra_instance_type
   security_group_id = module.vpc.internal_sg_id
   depends_on        = [module.vpc]
@@ -45,6 +46,7 @@ module "timescaledb" {
   project           = var.project
   vpc_id            = module.vpc.vpc_id
   subnet_id         = module.vpc.private_subnet_ids[0]
+  subnet_cidr       = module.vpc.private_subnet_cidrs[0]
   instance_type     = var.infra_instance_type
   security_group_id = module.vpc.internal_sg_id
   db_password       = var.db_password
@@ -57,6 +59,7 @@ module "ec2_workers" {
   project            = var.project
   vpc_id             = module.vpc.vpc_id
   subnet_ids         = module.vpc.private_subnet_ids
+  subnet_cidrs       = module.vpc.private_subnet_cidrs
   instance_type      = var.worker_instance_type
   worker_count       = var.worker_count
   security_group_id  = module.vpc.internal_sg_id
