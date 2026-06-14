@@ -27,8 +27,10 @@ var languages = map[string]Language{
 			return []string{
 				"g++", "-O2", "-std=c++20",
 				"-I/usr/local/include",
+				"-I/usr/local/include/uSockets",
 				"-o", outFile, srcFile,
-				"-lssl", "-lcrypto",
+				"-static",
+				"-lusockets", "-lssl", "-lcrypto", "-lz", "-lpthread", "-ldl",
 			}
 		},
 		RunCmd: func(artifactPath string) []string {

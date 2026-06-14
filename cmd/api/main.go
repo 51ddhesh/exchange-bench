@@ -212,21 +212,31 @@ func (a *apiServer) upsertRunScore(ctx context.Context, j job, metrics runner.Ru
 	if metrics.TicksSent > 0 {
 		correctness = float64(metrics.TicksCorrect) / float64(metrics.TicksSent)
 	}
+
+	avg_latency := float64(metrics.P50LatencyUs + metrics.P90LatencyUs + metrics.P99LatencyUs) / 3.0
+	if avg_latency < 1.0 {
+		avg_latency = 1.0
+	}
+	multiplier := 1000.0 / avg_latency
+	composite_score := float64(metrics.PeakTPS) * correctness * multiplier
+
 	_, err := a.db.Exec(ctx, `
 		INSERT INTO run_scores
 			(submission_id, team_id, attempt, run_id, language,
 			 ticks_sent, ticks_acked, peak_tps, capacity_tps,
-			 correctness, completed_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())
+			 correctness, composite_score, critical_flag, completed_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW())
 		ON CONFLICT (submission_id) DO UPDATE SET
-			run_id       = EXCLUDED.run_id,
-			language     = EXCLUDED.language,
-			ticks_sent   = EXCLUDED.ticks_sent,
-			ticks_acked  = EXCLUDED.ticks_acked,
-			peak_tps     = EXCLUDED.peak_tps,
-			capacity_tps = EXCLUDED.capacity_tps,
-			correctness  = EXCLUDED.correctness,
-			completed_at = EXCLUDED.completed_at
+			run_id          = EXCLUDED.run_id,
+			language        = EXCLUDED.language,
+			ticks_sent      = EXCLUDED.ticks_sent,
+			ticks_acked     = EXCLUDED.ticks_acked,
+			peak_tps        = EXCLUDED.peak_tps,
+			capacity_tps    = EXCLUDED.capacity_tps,
+			correctness     = EXCLUDED.correctness,
+			composite_score = EXCLUDED.composite_score,
+			critical_flag   = EXCLUDED.critical_flag,
+			completed_at    = EXCLUDED.completed_at
 	`,
 		j.SubmissionID,
 		j.TeamID,
@@ -238,6 +248,8 @@ func (a *apiServer) upsertRunScore(ctx context.Context, j job, metrics runner.Ru
 		metrics.PeakTPS,
 		metrics.CapacityTPS,
 		correctness,
+		composite_score,
+		false,
 	)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "[api] upsert run_scores %s: %v\n", j.SubmissionID, err)
@@ -441,6 +453,21 @@ func parseBrokers(s string) []string {
 	return strings.Split(s, ",")
 }
 
+// ── HTTP middleware ─────────────────────────────────────────────────────────────
+
+func withCORS(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "*")
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // ── main ──────────────────────────────────────────────────────────────────────
 
 func main() {
@@ -505,7 +532,7 @@ func main() {
 	log.Printf("[api] listening on %s  pool=%d  queue=%d  workers=%v  image=%s",
 		*listen, *pool, *queueDepth, addrs, *image)
 
-	if err := http.ListenAndServe(*listen, mux); err != nil {
+	if err := http.ListenAndServe(*listen, withCORS(mux)); err != nil {
 		fmt.Fprintf(os.Stderr, "api: %v\n", err)
 		os.Exit(1)
 	}

@@ -42,6 +42,8 @@ type leaderboardEntry struct {
 	Language       string  `json:"language"`
 	CompositeScore float64 `json:"composite_score"`
 	PeakTPS        float64 `json:"peak_tps"`
+	P50Us          int64   `json:"p50_us"`
+	P90Us          int64   `json:"p90_us"`
 	P99Us          int64   `json:"p99_us"`
 	Correctness    float64 `json:"correctness"`
 	CriticalFlag   bool    `json:"critical_flag"`
@@ -148,6 +150,8 @@ func buildTiers(rows []runScore) map[string][]leaderboardEntry {
 				Language:       m.Language,
 				CompositeScore: composite,
 				PeakTPS:        m.PeakTPS,
+				P50Us:          m.P50Us,
+				P90Us:          m.P90Us,
 				P99Us:          m.P99Us,
 				Correctness:    m.Correctness,
 				CriticalFlag:   m.CriticalFlag,

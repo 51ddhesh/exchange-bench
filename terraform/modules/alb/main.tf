@@ -1,5 +1,5 @@
-variable "project"           {}
-variable "vpc_id"            {}
+variable "project" {}
+variable "vpc_id" {}
 variable "public_subnet_ids" {}
 
 resource "aws_security_group" "alb" {
@@ -36,7 +36,7 @@ resource "aws_lb_target_group" "api" {
   port        = 8081
   protocol    = "HTTP"
   vpc_id      = var.vpc_id
-  target_type = "ip"
+  target_type = "instance"
 
   health_check {
     path                = "/health"
@@ -90,6 +90,6 @@ resource "aws_lb_listener_rule" "api" {
   }
 }
 
-output "dns_name"       { value = aws_lb.main.dns_name }
+output "dns_name" { value = aws_lb.main.dns_name }
 output "target_api_arn" { value = aws_lb_target_group.api.arn }
-output "target_lb_arn"  { value = aws_lb_target_group.leaderboard.arn }
+output "target_lb_arn" { value = aws_lb_target_group.leaderboard.arn }

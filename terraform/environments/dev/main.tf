@@ -23,14 +23,14 @@ module "exchange_bench" {
   ecs_memory           = var.ecs_memory
 }
 
-variable "aws_region"           {}
-variable "project"              {}
+variable "aws_region" {}
+variable "project" {}
 variable "worker_instance_type" {}
-variable "infra_instance_type"  {}
-variable "worker_count"         {}
-variable "db_password"          { sensitive = true }
-variable "ecs_cpu"              {}
-variable "ecs_memory"           {}
+variable "infra_instance_type" {}
+variable "worker_count" {}
+variable "db_password" { sensitive = true }
+variable "ecs_cpu" {}
+variable "ecs_memory" {}
 
 output "alb_dns_name" { value = module.exchange_bench.alb_dns_name }
 output "ecr_urls" {

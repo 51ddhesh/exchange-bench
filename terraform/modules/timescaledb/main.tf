@@ -1,10 +1,10 @@
-variable "project"           {}
-variable "vpc_id"            {}
-variable "subnet_id"         {}
-variable "instance_type"     {}
+variable "project" {}
+variable "vpc_id" {}
+variable "subnet_id" {}
+variable "instance_type" {}
 variable "security_group_id" {}
-variable "db_password"       { sensitive = true }
-variable "schema_sql"        { description = "Contents of schema.sql, passed from root module" }
+variable "db_password" { sensitive = true }
+variable "schema_sql" { description = "Contents of schema.sql, passed from root module" }
 
 data "aws_ami" "ubuntu" {
   most_recent = true
@@ -51,9 +51,22 @@ resource "aws_instance" "timescaledb" {
   user_data = <<-EOF
     #!/bin/bash
     set -euo pipefail
-    apt-get update -y
-    apt-get install -y docker.io
+
+    for i in $(seq 1 30); do
+      apt-get -o Acquire::ForceIPv4=true update -y && break
+      echo "apt-get update attempt $i failed, retrying in 10s..."
+      sleep 10
+    done
+
+    for i in $(seq 1 10); do
+      apt-get -o Acquire::ForceIPv4=true install -y docker.io && break
+      echo "apt-get install attempt $i failed, retrying in 10s..."
+      sleep 10
+    done
+
+    command -v docker || { echo "FATAL: Docker not installed after retries"; exit 1; }
     systemctl enable --now docker
+
     docker run -d \
       --name timescaledb \
       --restart always \
@@ -63,11 +76,11 @@ resource "aws_instance" "timescaledb" {
       -e "POSTGRES_PASSWORD=${var.db_password}" \
       -e POSTGRES_DB=postgres \
       timescale/timescaledb-ha:pg16
-    # Wait for PostgreSQL to be ready
+
     for i in $(seq 1 30); do
       docker exec timescaledb pg_isready -U postgres && break || sleep 5
     done
-    # Run schema
+
     docker exec timescaledb psql -U postgres -d postgres <<'SCHEMA'
 ${var.schema_sql}
 SCHEMA

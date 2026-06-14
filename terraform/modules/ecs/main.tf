@@ -1,19 +1,19 @@
-variable "project"              {}
-variable "vpc_id"               {}
-variable "private_subnet_ids"   {}
-variable "security_group_id"    {}
-variable "alb_target_api_arn"   {}
-variable "alb_target_lb_arn"    {}
-variable "aws_region"           {}
-variable "ecr_api_url"          {}
-variable "ecr_ingester_url"     {}
-variable "ecr_leaderboard_url"  {}
-variable "redpanda_ip"          {}
-variable "timescaledb_ip"       {}
-variable "worker_ips"           {}
-variable "db_password"          { sensitive = true }
-variable "cpu"                  {}
-variable "memory"               {}
+variable "project" {}
+variable "vpc_id" {}
+variable "private_subnet_ids" {}
+variable "security_group_id" {}
+variable "alb_target_api_arn" {}
+variable "alb_target_lb_arn" {}
+variable "aws_region" {}
+variable "ecr_api_url" {}
+variable "ecr_ingester_url" {}
+variable "ecr_leaderboard_url" {}
+variable "redpanda_ip" {}
+variable "timescaledb_ip" {}
+variable "worker_ips" {}
+variable "db_password" { sensitive = true }
+variable "cpu" {}
+variable "memory" {}
 
 resource "aws_iam_role" "ecs_task_exec" {
   name = "${var.project}-ecs-exec-role"

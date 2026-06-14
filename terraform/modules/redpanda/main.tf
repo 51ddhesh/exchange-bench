@@ -1,13 +1,12 @@
-variable "project"           {}
-variable "vpc_id"            {}
-variable "subnet_id"         {}
-variable "instance_type"     {}
+variable "project" {}
+variable "vpc_id" {}
+variable "subnet_id" {}
+variable "instance_type" {}
 variable "security_group_id" {}
 
 data "aws_ami" "ubuntu" {
   most_recent = true
-  owners      = ["099720109477"] # Canonical
-
+  owners      = ["099720109477"]
   filter {
     name   = "name"
     values = ["ubuntu/images/hvm-ssd/ubuntu-jammy-22.04-amd64-server-*"]
@@ -50,25 +49,43 @@ resource "aws_instance" "redpanda" {
   user_data = <<-EOF
     #!/bin/bash
     set -euo pipefail
-    apt-get update -y
-    apt-get install -y docker.io
+
+    for i in $(seq 1 30); do
+      apt-get -o Acquire::ForceIPv4=true update -y && break
+      echo "apt-get update attempt $i failed, retrying in 10s..."
+      sleep 10
+    done
+
+    for i in $(seq 1 10); do
+      apt-get -o Acquire::ForceIPv4=true install -y docker.io && break
+      echo "apt-get install attempt $i failed, retrying in 10s..."
+      sleep 10
+    done
+
+    command -v docker || { echo "FATAL: Docker not installed after retries"; exit 1; }
     systemctl enable --now docker
+
+    # Fetch this instance's private IP from EC2 metadata so Redpanda
+    # advertises the correct address to other VPC clients.
+    PRIVATE_IP=$(curl -sf --max-time 5 http://169.254.169.254/latest/meta-data/local-ipv4)
+
     docker run -d \
       --name redpanda \
       --restart always \
       -p 9092:9092 \
-      -p 19092:19092 \
       docker.redpanda.com/redpandadata/redpanda:v24.1.1 \
       redpanda start \
         --overprovisioned \
-        --smp=2 \
-        --memory=4G \
+        --smp=1 \
+        --memory=512M \
         --reserve-memory=0M \
         --node-id=0 \
         --check=false \
-        --kafka-addr=PLAINTEXT://0.0.0.0:9092
-    # Create topic after Redpanda starts (retry loop)
-    for i in $(seq 1 12); do
+        --kafka-addr=PLAINTEXT://0.0.0.0:9092 \
+        --advertise-kafka-addr=PLAINTEXT://$PRIVATE_IP:9092
+
+    # Wait for Redpanda to be ready, then create the topic.
+    for i in $(seq 1 24); do
       docker exec redpanda rpk topic create telemetry-events \
         --brokers localhost:9092 \
         --partitions 10 \

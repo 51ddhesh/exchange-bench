@@ -1,18 +1,19 @@
-variable "project"            {}
-variable "vpc_id"             {}
-variable "subnet_ids"         {}
-variable "instance_type"      {}
-variable "worker_count"       {}
-variable "security_group_id"  {}
-variable "ecr_worker_url"     {}
-variable "ecr_api_url"        {}
-variable "ecr_compiler_url"   {}
-variable "ecr_runner_url"     {}
+variable "project" {}
+variable "vpc_id" {}
+variable "subnet_ids" {}
+variable "instance_type" {}
+variable "worker_count" {}
+variable "security_group_id" {}
+variable "ecr_worker_url" {}
+variable "ecr_api_url" {}
+variable "ecr_compiler_url" {}
+variable "ecr_runner_url" {}
 variable "ecr_contestant_url" {}
-variable "aws_region"         {}
-variable "redpanda_ip"        {}
-variable "timescaledb_ip"     {}
-variable "db_password"        { sensitive = true }
+variable "aws_region" {}
+variable "redpanda_ip" {}
+variable "timescaledb_ip" {}
+variable "alb_target_api_arn" {}
+variable "db_password" { sensitive = true }
 
 data "aws_ami" "ubuntu" {
   most_recent = true
@@ -28,6 +29,12 @@ data "aws_ami" "ubuntu" {
 }
 
 data "aws_caller_identity" "current" {}
+
+resource "aws_lb_target_group_attachment" "api" {
+  target_group_arn = var.alb_target_api_arn
+  target_id        = aws_instance.worker0.id
+  port             = 8081
+}
 
 resource "aws_iam_role" "worker" {
   name = "${var.project}-worker-role"
@@ -80,8 +87,20 @@ resource "aws_instance" "workers" {
   user_data = <<-EOF
     #!/bin/bash
     set -euo pipefail
-    apt-get update -y
-    apt-get install -y docker.io awscli
+
+    for i in $(seq 1 30); do
+      apt-get -o Acquire::ForceIPv4=true update -y && break
+      echo "apt-get update attempt $i failed, retrying in 10s..."
+      sleep 10
+    done
+
+    for i in $(seq 1 10); do
+      apt-get -o Acquire::ForceIPv4=true install -y docker.io awscli && break
+      echo "apt-get install attempt $i failed, retrying in 10s..."
+      sleep 10
+    done
+
+    command -v docker || { echo "FATAL: Docker not installed after retries"; exit 1; }
     systemctl enable --now docker
 
     aws ecr get-login-password --region ${var.aws_region} \
@@ -112,10 +131,9 @@ resource "aws_instance" "workers" {
       --seccomp=deployments/docker/seccomp/contestant.json
   EOF
 
-  tags = { Name = "${var.project}-worker-$((count.index + 1)}" }
+  tags = { Name = "${var.project}-worker-${count.index + 1}" }
 }
 
-# Worker-0 also runs the api. Created after workers 1-4 so their IPs are known.
 locals {
   other_worker_ips  = aws_instance.workers[*].private_ip
   worker_grpc_addrs = join(",", concat(
@@ -136,8 +154,20 @@ resource "aws_instance" "worker0" {
   user_data = <<-EOF
     #!/bin/bash
     set -euo pipefail
-    apt-get update -y
-    apt-get install -y docker.io awscli
+
+    for i in $(seq 1 30); do
+      apt-get -o Acquire::ForceIPv4=true update -y && break
+      echo "apt-get update attempt $i failed, retrying in 10s..."
+      sleep 10
+    done
+
+    for i in $(seq 1 10); do
+      apt-get -o Acquire::ForceIPv4=true install -y docker.io awscli && break
+      echo "apt-get install attempt $i failed, retrying in 10s..."
+      sleep 10
+    done
+
+    command -v docker || { echo "FATAL: Docker not installed after retries"; exit 1; }
     systemctl enable --now docker
 
     aws ecr get-login-password --region ${var.aws_region} \
@@ -195,6 +225,6 @@ output "private_ips" {
     aws_instance.workers[*].private_ip
   )
 }
-output "worker0_id"        { value = aws_instance.worker0.id }
+output "worker0_id" { value = aws_instance.worker0.id }
 output "worker_grpc_addrs" { value = local.worker_grpc_addrs }
-output "asg_name"          { value = "static-${var.project}-workers" }
+output "asg_name" { value = "static-${var.project}-workers" }

@@ -37,6 +37,7 @@ module "redpanda" {
   subnet_id         = module.vpc.private_subnet_ids[0]
   instance_type     = var.infra_instance_type
   security_group_id = module.vpc.internal_sg_id
+  depends_on        = [module.vpc]
 }
 
 module "timescaledb" {
@@ -48,6 +49,7 @@ module "timescaledb" {
   security_group_id = module.vpc.internal_sg_id
   db_password       = var.db_password
   schema_sql        = file("${path.module}/../internal/telemetry/schema.sql")
+  depends_on        = [module.vpc]
 }
 
 module "ec2_workers" {
@@ -66,7 +68,9 @@ module "ec2_workers" {
   aws_region         = var.aws_region
   redpanda_ip        = module.redpanda.private_ip
   timescaledb_ip     = module.timescaledb.private_ip
+  alb_target_api_arn = module.alb.target_api_arn
   db_password        = var.db_password
+  depends_on         = [module.vpc]
 }
 
 module "ecs" {

@@ -3,112 +3,228 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ExchangeBench Leaderboard</title>
+<title>ExchangeBench</title>
 <style>
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: monospace; background: #0f1117; color: #e0e0e0; padding: 24px; }
-  h1 { font-size: 1.4rem; color: #7eb8f7; margin-bottom: 4px; }
-  .subtitle { font-size: 0.75rem; color: #555; margin-bottom: 28px; }
-  h2 { font-size: 0.9rem; color: #aaa; margin: 24px 0 8px; text-transform: uppercase; letter-spacing: 2px; }
-  table { width: 100%; border-collapse: collapse; font-size: 0.82rem; margin-bottom: 8px; }
-  th { text-align: left; padding: 6px 10px; border-bottom: 1px solid #2a2a2a; color: #666; font-weight: normal; }
-  td { padding: 6px 10px; border-bottom: 1px solid #1a1a1a; }
-  tr:hover td { background: #161b22; }
-  .flag { color: #f0b429; }
-  .critical td { background: #1c1600 !important; }
-  @keyframes flashGreen { 0%,100%{background:transparent} 30%{background:#0d3320} }
-  @keyframes flashRed   { 0%,100%{background:transparent} 30%{background:#3a0d0d} }
-  .flash-green td { animation: flashGreen 1s ease; }
-  .flash-red   td { animation: flashRed   1s ease; }
-  .status { font-size: 0.72rem; color: #555; margin-bottom: 20px; }
-  .status.connected { color: #3fb950; }
-  .my-sub { margin-top: 36px; border-top: 1px solid #2a2a2a; padding-top: 24px; }
-  .my-sub h2 { margin-top: 0; }
-  .input-row { display: flex; gap: 8px; margin-bottom: 16px; }
-  input[type=text] { background: #161b22; border: 1px solid #30363d; color: #e0e0e0;
-    padding: 6px 10px; font-family: monospace; font-size: 0.82rem; border-radius: 4px; flex: 1; max-width: 280px; }
-  button { background: #1f6feb; border: none; color: #fff; padding: 6px 16px;
-    font-family: monospace; font-size: 0.82rem; border-radius: 4px; cursor: pointer; }
-  button:hover { background: #388bfd; }
-  #history-error { color: #f85149; font-size: 0.78rem; margin-top: 6px; }
-  .empty { color: #444; font-style: italic; padding: 10px; font-size: 0.8rem; }
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: monospace;
+  background: #111;
+  color: #ccc;
+  padding: 24px;
+}
+
+h1 { font-size: 1.2rem; color: #fff; margin-bottom: 2px; }
+.sub { font-size: 0.75rem; color: #555; margin-bottom: 6px; }
+.ws  { font-size: 0.72rem; color: #444; margin-bottom: 24px; }
+.ws.live { color: #5a5; }
+
+.layout { display: flex; gap: 32px; align-items: flex-start; }
+.left  { flex: 1; min-width: 0; }
+.right { width: 320px; flex-shrink: 0; }
+
+h2 {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  color: #fff;
+  margin: 20px 0 6px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid #222;
+}
+h2:first-child { margin-top: 0; }
+
+table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
+th { text-align: left; padding: 4px 8px; color: #444; font-weight: normal; font-size: 0.72rem; }
+td { padding: 4px 8px; border-top: 1px solid #1a1a1a; }
+tr:hover td { background: #1a1a1a; }
+.critical td { background: #1a0f0f !important; }
+
+@keyframes fg { 0%,100%{background:transparent} 40%{background:#0d2010} }
+@keyframes fr { 0%,100%{background:transparent} 40%{background:#200d0d} }
+.flash-green td { animation: fg 1s ease; }
+.flash-red   td { animation: fr 1s ease; }
+
+.empty { color: #333; padding: 8px; font-size: 0.78rem; }
+.flag  { color: #a80; }
+
+/* submit panel */
+.panel {
+  border: 1px solid #222;
+  padding: 16px;
+  position: sticky;
+  top: 24px;
+}
+.panel h2 { margin-top: 0; }
+
+label {
+  display: block;
+  font-size: 0.68rem;
+  color: #fff;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin: 10px 0 3px;
+}
+label:first-of-type { margin-top: 0; }
+
+input, select, textarea {
+  width: 100%;
+  background: #1a1a1a;
+  border: 1px solid #2a2a2a;
+  color: #ccc;
+  font-family: monospace;
+  font-size: 0.78rem;
+  padding: 6px 8px;
+  outline: none;
+}
+input:focus, select:focus, textarea:focus { border-color: #555; }
+textarea { resize: vertical; min-height: 200px; font-size: 0.73rem; line-height: 1.5; }
+select option { background: #1a1a1a; }
+
+button {
+  width: 100%;
+  margin-top: 12px;
+  background: #222;
+  border: 1px solid #444;
+  color: #ccc;
+  font-family: monospace;
+  font-size: 0.8rem;
+  padding: 8px;
+  cursor: pointer;
+}
+button:hover:not(:disabled) { background: #2a2a2a; color: #fff; }
+button:disabled { color: #444; cursor: default; }
+
+.verdict {
+  margin-top: 8px;
+  padding: 6px 8px;
+  font-size: 0.75rem;
+  display: none;
+  border-left: 2px solid #444;
+  color: #888;
+  white-space: pre;
+}
+.verdict.show   { display: block; }
+.verdict.queued  { border-color: #555; color: #888; }
+.verdict.running { border-color: #a80; color: #a80; }
+.verdict.accepted{ border-color: #585; color: #5a5; }
+.verdict.failed  { border-color: #844; color: #a55; }
+
+.history-row { display: flex; gap: 6px; margin-top: 12px; }
+.history-row input { flex: 1; }
+.history-row button { width: auto; margin-top: 0; padding: 6px 12px; }
+#history-error { font-size: 0.72rem; color: #a55; margin-top: 4px; }
+
+@media (max-width: 800px) {
+  .layout { flex-direction: column; }
+  .right { width: 100%; }
+  .panel { position: static; }
+}
 </style>
 </head>
 <body>
 
-<h1>ExchangeBench Leaderboard</h1>
-<div class="subtitle">IICPC — Matching Engine Benchmark</div>
-<div class="status" id="ws-status">● connecting...</div>
+<h1>ExchangeBench</h1>
+<div class="ws" id="ws-status">● connecting</div>
 
-<h2>Systems (C++ / Rust / Zig)</h2>
-<table id="tbl-systems"><thead><tr>
-  <th>#</th><th>Team</th><th>Lang</th><th>Score</th><th>Peak TPS</th><th>P99 µs</th><th>Correctness</th><th>⚑</th>
-</tr></thead><tbody></tbody></table>
+<div class="layout">
+  <div class="left">
 
-<h2>GC (Go)</h2>
-<table id="tbl-gc"><thead><tr>
-  <th>#</th><th>Team</th><th>Lang</th><th>Score</th><th>Peak TPS</th><th>P99 µs</th><th>Correctness</th><th>⚑</th>
-</tr></thead><tbody></tbody></table>
+    <h2>Systems — C++ / Rust / Zig</h2>
+    <table id="tbl-systems">
+      <thead><tr><th>#</th><th>Team</th><th>Lang</th><th>Score</th><th>Peak TPS</th><th>P50 µs</th><th>P90 µs</th><th>P99 µs</th><th>Correctness</th><th></th></tr></thead>
+      <tbody></tbody>
+    </table>
 
-<h2>Interpreted (Python)</h2>
-<table id="tbl-interpreted"><thead><tr>
-  <th>#</th><th>Team</th><th>Lang</th><th>Score</th><th>Peak TPS</th><th>P99 µs</th><th>Correctness</th><th>⚑</th>
-</tr></thead><tbody></tbody></table>
+    <h2>GC — Go</h2>
+    <table id="tbl-gc">
+      <thead><tr><th>#</th><th>Team</th><th>Lang</th><th>Score</th><th>Peak TPS</th><th>P50 µs</th><th>P90 µs</th><th>P99 µs</th><th>Correctness</th><th></th></tr></thead>
+      <tbody></tbody>
+    </table>
 
-<div class="my-sub">
-  <h2>My Submissions</h2>
-  <div class="input-row">
-    <input type="text" id="team-input" placeholder="team-1" />
-    <button onclick="loadHistory()">Load</button>
+    <h2>Interpreted — Python</h2>
+    <table id="tbl-interpreted">
+      <thead><tr><th>#</th><th>Team</th><th>Lang</th><th>Score</th><th>Peak TPS</th><th>P50 µs</th><th>P90 µs</th><th>P99 µs</th><th>Correctness</th><th></th></tr></thead>
+      <tbody></tbody>
+    </table>
+
+    <h2>My Submissions</h2>
+    <div class="history-row">
+      <input type="text" id="team-input" placeholder="team-id" />
+      <button onclick="loadHistory()">Load</button>
+    </div>
+    <div id="history-error"></div>
+    <table id="tbl-history" style="display:none; margin-top:8px;">
+      <thead><tr><th>#</th><th>Submission</th><th>Lang</th><th>Score</th><th>Peak TPS</th><th>P50 µs</th><th>P90 µs</th><th>P99 µs</th><th>Correctness</th><th>Time</th></tr></thead>
+      <tbody></tbody>
+    </table>
+
   </div>
-  <div id="history-error"></div>
-  <table id="tbl-history" style="display:none"><thead><tr>
-    <th>Attempt</th><th>Submission</th><th>Lang</th><th>Score</th>
-    <th>Peak TPS</th><th>P99 µs</th><th>Correctness</th><th>Completed</th>
-  </tr></thead><tbody></tbody></table>
+
+  <div class="right">
+    <div class="panel">
+      <h2>Submit</h2>
+
+      <label>Team ID</label>
+      <input type="text" id="sub-team" placeholder="team-1" />
+
+      <label>Language</label>
+      <select id="sub-lang">
+        <option value="go">Go</option>
+        <option value="cpp">C++</option>
+        <option value="rust">Rust</option>
+        <option value="python">Python</option>
+      </select>
+
+      <label>Source Code</label>
+      <textarea id="sub-code" spellcheck="false" placeholder="paste your solution here"></textarea>
+
+      <button id="sub-btn" onclick="submitSolution()">Submit</button>
+      <div class="verdict" id="verdict"></div>
+    </div>
+  </div>
 </div>
 
 <script>
 const prevRanks = { systems: {}, gc: {}, interpreted: {} };
+const langExt   = { go: '.go', cpp: '.cpp', rust: '.rs', python: '.py' };
+const API       = 'http://localhost:8081';
 
-function pct(v) { return (v * 100).toFixed(2) + '%'; }
-function num(v) { return Number(v).toLocaleString(); }
-function score(v) { return (v * 100).toFixed(1); }
+function pct(v)   { return (v*100).toFixed(2)+'%'; }
+function num(v)   { return Math.round(v).toLocaleString(); }
+function sc(v)    { return (v*100).toFixed(1); }
 
-function renderTier(tierId, entries) {
-  const tbody = document.querySelector('#tbl-' + tierId + ' tbody');
-  const prev = prevRanks[tierId] || {};
-  const next = {};
+function row(e, flash, crit) {
+  return `<tr class="${flash} ${crit}">
+    <td>${e.rank}</td>
+    <td>${e.team_id}</td>
+    <td>${e.language}</td>
+    <td>${sc(e.composite_score)}</td>
+    <td>${num(e.peak_tps)}</td>
+    <td>${e.p50_us}</td>
+    <td>${e.p90_us}</td>
+    <td>${e.p99_us}</td>
+    <td>${pct(e.correctness)}</td>
+    <td>${e.critical_flag ? '<span class="flag">⚠</span>' : ''}</td>
+  </tr>`;
+}
 
-  if (!entries || entries.length === 0) {
+function renderTier(id, entries) {
+  const tbody = document.querySelector('#tbl-'+id+' tbody');
+  const prev  = prevRanks[id] || {};
+  const next  = {};
+  if (!entries || !entries.length) {
     tbody.innerHTML = '<tr><td colspan="8" class="empty">no submissions yet</td></tr>';
-    prevRanks[tierId] = {};
+    prevRanks[id] = {};
     return;
   }
-
-  const rows = entries.map(e => {
+  tbody.innerHTML = entries.map(e => {
     next[e.team_id] = e.rank;
-    const prevRank = prev[e.team_id];
-    let flashClass = '';
-    if (prevRank !== undefined && prevRank !== e.rank) {
-      flashClass = e.rank < prevRank ? 'flash-green' : 'flash-red';
-    }
-    const critClass = e.critical_flag ? 'critical' : '';
-    const flag = e.critical_flag ? '<span class="flag">⚠</span>' : '';
-    return `<tr class="${flashClass} ${critClass}">
-      <td>${e.rank}</td>
-      <td>${e.team_id}</td>
-      <td>${e.language}</td>
-      <td>${score(e.composite_score)}</td>
-      <td>${num(e.peak_tps)}</td>
-      <td>${e.p99_us}</td>
-      <td>${pct(e.correctness)}</td>
-      <td>${flag}</td>
-    </tr>`;
-  });
-
-  tbody.innerHTML = rows.join('');
-  prevRanks[tierId] = next;
+    const p = prev[e.team_id];
+    const flash = p !== undefined && p !== e.rank ? (e.rank < p ? 'flash-green' : 'flash-red') : '';
+    return row(e, flash, e.critical_flag ? 'critical' : '');
+  }).join('');
+  prevRanks[id] = next;
 }
 
 function applyUpdate(data) {
@@ -120,59 +236,93 @@ function applyUpdate(data) {
 
 function connect() {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const ws = new WebSocket(proto + '//' + location.host + '/ws');
-  const statusEl = document.getElementById('ws-status');
+  const ws    = new WebSocket(proto + '//' + location.host + '/ws');
+  const dot   = document.getElementById('ws-status');
+  ws.onopen    = () => { dot.textContent = '● live'; dot.className = 'ws live'; };
+  ws.onmessage = e => { try { applyUpdate(JSON.parse(e.data)); } catch(_) {} };
+  ws.onclose   = () => { dot.textContent = '● reconnecting'; dot.className = 'ws'; setTimeout(connect, 2000); };
+  ws.onerror   = () => ws.close();
+}
 
-  ws.onopen = () => {
-    statusEl.textContent = '● connected';
-    statusEl.className = 'status connected';
-  };
+function verdict(type, msg) {
+  const el = document.getElementById('verdict');
+  el.className = 'verdict show ' + type;
+  el.textContent = msg;
+}
 
-  ws.onmessage = e => {
-    try { applyUpdate(JSON.parse(e.data)); } catch (_) {}
-  };
+async function submitSolution() {
+  const team = document.getElementById('sub-team').value.trim();
+  const lang = document.getElementById('sub-lang').value;
+  const code = document.getElementById('sub-code').value.trim();
+  const btn  = document.getElementById('sub-btn');
 
-  ws.onclose = () => {
-    statusEl.textContent = '● reconnecting...';
-    statusEl.className = 'status';
-    setTimeout(connect, 2000);
-  };
+  if (!team) { verdict('failed', 'Team ID required.'); return; }
+  if (!code) { verdict('failed', 'Paste your source code.'); return; }
 
-  ws.onerror = () => ws.close();
+  const fd = new FormData();
+  fd.append('team_id',  team);
+  fd.append('language', lang);
+  fd.append('source',   new Blob([code], {type:'text/plain'}), 'solution'+langExt[lang]);
+
+  btn.disabled = true;
+  verdict('queued', 'Submitting...');
+
+  let sid;
+  try {
+    const res  = await fetch(API + '/submissions', { method: 'POST', body: fd });
+    const data = await res.json();
+    if (!res.ok) { verdict('failed', data || 'Rejected.'); btn.disabled = false; return; }
+    sid = data.submission_id;
+    verdict('queued', sid + '\nQueued');
+  } catch(e) {
+    verdict('failed', 'Network error — is the API running on :8081?');
+    btn.disabled = false;
+    return;
+  }
+
+  const poll = setInterval(async () => {
+    try {
+      const res  = await fetch(API + '/submissions/' + sid);
+      const data = await res.json();
+      if (data.status === 'running') {
+        verdict('running', sid + '\nRunning...');
+      } else if (data.status === 'done') {
+        clearInterval(poll);
+        btn.disabled = false;
+        verdict('accepted',
+          sid + '\nAccepted\n' +
+          'Peak TPS  ' + num(data.peak_tps) + '\n' +
+          'P99       ' + data.p99_us + ' µs');
+      } else if (data.status === 'failed') {
+        clearInterval(poll);
+        btn.disabled = false;
+        verdict('failed', sid + '\n' + (data.error || 'Failed').slice(0, 140));
+      }
+    } catch(_) {}
+  }, 1500);
 }
 
 async function loadHistory() {
-  const teamID = document.getElementById('team-input').value.trim();
-  const errEl  = document.getElementById('history-error');
-  const tbl    = document.getElementById('tbl-history');
-  errEl.textContent = '';
-
-  if (!teamID) { errEl.textContent = 'enter a team ID'; return; }
-
+  const team = document.getElementById('team-input').value.trim();
+  const err  = document.getElementById('history-error');
+  const tbl  = document.getElementById('tbl-history');
+  err.textContent = '';
+  if (!team) { err.textContent = 'enter a team ID'; return; }
   try {
-    const res = await fetch('/api/teams/' + encodeURIComponent(teamID));
-    if (!res.ok) { errEl.textContent = 'not found'; tbl.style.display = 'none'; return; }
+    const res  = await fetch('/api/teams/' + encodeURIComponent(team));
+    if (!res.ok) { err.textContent = 'not found'; tbl.style.display='none'; return; }
     const data = await res.json();
-    const rows = (data.history || []).map(h => `<tr>
-      <td>${h.attempt}</td>
-      <td>${h.submission_id}</td>
-      <td>${h.language}</td>
-      <td>${score(h.composite_score)}</td>
-      <td>${num(h.peak_tps)}</td>
-      <td>${h.p99_us}</td>
+    const rows = (data.history||[]).map(h => `<tr>
+      <td>${h.attempt}</td><td>${h.submission_id}</td><td>${h.language}</td>
+      <td>${sc(h.composite_score)}</td><td>${num(h.peak_tps)}</td>
+      <td>${h.p50_us}</td><td>${h.p90_us}</td><td>${h.p99_us}</td>
       <td>${pct(h.correctness)}</td>
-      <td>${h.completed_at.replace('T',' ').replace('Z','')}</td>
+      <td style="color:#444;font-size:0.7rem">${h.completed_at.replace('T',' ').slice(0,19)}</td>
     </tr>`);
-    if (rows.length === 0) {
-      errEl.textContent = 'no submissions for ' + teamID;
-      tbl.style.display = 'none';
-      return;
-    }
+    if (!rows.length) { err.textContent = 'no submissions for '+team; tbl.style.display='none'; return; }
     tbl.querySelector('tbody').innerHTML = rows.join('');
     tbl.style.display = 'table';
-  } catch (_) {
-    errEl.textContent = 'request failed';
-  }
+  } catch(_) { err.textContent = 'request failed'; }
 }
 
 connect();
