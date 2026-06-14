@@ -208,6 +208,9 @@ resource "aws_instance" "worker0" {
       --network host \
       -v /var/run/docker.sock:/var/run/docker.sock \
       -v /tmp/exchange-bench:/tmp/exchange-bench \
+      -e S3_BUCKET=${var.s3_bucket_name} \
+      -e SQS_QUEUE_URL=${var.sqs_queue_url} \
+      -e AWS_DEFAULT_REGION=${var.aws_region} \
       ${var.ecr_api_url}:latest \
       --listen=:8081 \
       --workers=${local.worker_grpc_addrs} \
@@ -233,3 +236,31 @@ output "private_ips" {
 output "worker0_id" { value = aws_instance.worker0.id }
 output "worker_grpc_addrs" { value = local.worker_grpc_addrs }
 output "asg_name" { value = "static-${var.project}-workers" }
+
+resource "aws_iam_role_policy" "worker_async" {
+  name = "${var.project}-worker-async"
+  role = aws_iam_role.worker.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = [
+          "s3:GetObject",
+          "s3:PutObject"
+        ]
+        Resource = "${var.s3_bucket_arn}/*"
+      },
+      {
+        Effect   = "Allow"
+        Action   = [
+          "sqs:SendMessage",
+          "sqs:ReceiveMessage",
+          "sqs:DeleteMessage",
+          "sqs:GetQueueAttributes"
+        ]
+        Resource = var.sqs_queue_arn
+      }
+    ]
+  })
+}
