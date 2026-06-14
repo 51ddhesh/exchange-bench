@@ -57,19 +57,23 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.worker
+      network: host
     image: exchange-bench-worker
     network_mode: host
     environment:
       - DOCKER_HOST=unix:///var/run/docker.sock
+      - WORKER_TMP_DIR=/tmp/exchange-bench-shared
     depends_on:
       timescaledb:
         condition: service_healthy
     volumes:
       - /run/user/1000/docker.sock:/var/run/docker.sock
+      - /tmp/exchange-bench-shared:/tmp/exchange-bench-shared
     command:
       - --listen=:9090
       - --worker-id=worker-0
       - --seccomp=deployments/docker/seccomp/contestant.json
+      - --local=true
     restart: unless-stopped
 
   worker-1:
@@ -78,14 +82,17 @@ services:
     network_mode: host
     environment:
       - DOCKER_HOST=unix:///var/run/docker.sock
+      - WORKER_TMP_DIR=/tmp/exchange-bench-shared
     depends_on:
       - worker-0
     volumes:
       - /run/user/1000/docker.sock:/var/run/docker.sock
+      - /tmp/exchange-bench-shared:/tmp/exchange-bench-shared
     command:
       - --listen=:9091
       - --worker-id=worker-1
       - --seccomp=deployments/docker/seccomp/contestant.json
+      - --local=true
     restart: unless-stopped
 
   worker-2:
@@ -94,14 +101,17 @@ services:
     network_mode: host
     environment:
       - DOCKER_HOST=unix:///var/run/docker.sock
+      - WORKER_TMP_DIR=/tmp/exchange-bench-shared
     depends_on:
       - worker-0
     volumes:
       - /run/user/1000/docker.sock:/var/run/docker.sock
+      - /tmp/exchange-bench-shared:/tmp/exchange-bench-shared
     command:
       - --listen=:9092
       - --worker-id=worker-2
       - --seccomp=deployments/docker/seccomp/contestant.json
+      - --local=true
     restart: unless-stopped
 
   worker-3:
@@ -110,14 +120,17 @@ services:
     network_mode: host
     environment:
       - DOCKER_HOST=unix:///var/run/docker.sock
+      - WORKER_TMP_DIR=/tmp/exchange-bench-shared
     depends_on:
       - worker-0
     volumes:
       - /run/user/1000/docker.sock:/var/run/docker.sock
+      - /tmp/exchange-bench-shared:/tmp/exchange-bench-shared
     command:
       - --listen=:9093
       - --worker-id=worker-3
       - --seccomp=deployments/docker/seccomp/contestant.json
+      - --local=true
     restart: unless-stopped
 
   worker-4:
@@ -126,24 +139,29 @@ services:
     network_mode: host
     environment:
       - DOCKER_HOST=unix:///var/run/docker.sock
+      - WORKER_TMP_DIR=/tmp/exchange-bench-shared
     depends_on:
       - worker-0
     volumes:
       - /run/user/1000/docker.sock:/var/run/docker.sock
+      - /tmp/exchange-bench-shared:/tmp/exchange-bench-shared
     command:
       - --listen=:9094
       - --worker-id=worker-4
       - --seccomp=deployments/docker/seccomp/contestant.json
+      - --local=true
     restart: unless-stopped
 
   api:
     build:
       context: .
       dockerfile: Dockerfile.api
+      network: host
     image: exchange-bench-api
     network_mode: host
     environment:
       - DOCKER_HOST=unix:///var/run/docker.sock
+      - WORKER_TMP_DIR=/tmp/exchange-bench-shared
     depends_on:
       timescaledb:
         condition: service_healthy
@@ -155,24 +173,27 @@ services:
         condition: service_started
     volumes:
       - /run/user/1000/docker.sock:/var/run/docker.sock
-      - /tmp/exchange-bench:/tmp/exchange-bench
+      - /tmp/exchange-bench-shared:/tmp/exchange-bench-shared
     command:
       - --listen=:8081
       - --workers=localhost:9090,localhost:9091,localhost:9092,localhost:9093,localhost:9094
       - --image=exchange-bench-contestant
       - --seccomp=deployments/docker/seccomp/contestant.json
+      - --local=true
       - --ticks=10000
       - --init-rate=200
       - --max-rate=5000
       - --redpanda-brokers=localhost:19092
       - --redpanda-topic=telemetry-events
       - --dsn=postgres://postgres:password@localhost:5432/postgres
+      - --local=true
     restart: unless-stopped
 
   ingester:
     build:
       context: .
       dockerfile: Dockerfile.ingester
+      network: host
     image: exchange-bench-ingester
     network_mode: host
     depends_on:
@@ -192,6 +213,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.leaderboard
+      network: host
     image: exchange-bench-leaderboard
     network_mode: host
     depends_on:

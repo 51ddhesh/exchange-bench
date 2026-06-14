@@ -15,7 +15,7 @@ build_and_push() {
   local dockerfile="$2"
   local repo="${ECR_BASE}/${PROJECT}-${name}"
   echo "==> Building ${name}"
-  docker build -t "${PROJECT}-${name}" -f "${dockerfile}" .
+  docker build --network host -t "${PROJECT}-${name}" -f "${dockerfile}" .
   docker tag "${PROJECT}-${name}:latest" "${repo}:latest"
   echo "==> Pushing ${name}"
   docker push "${repo}:latest"
@@ -28,6 +28,7 @@ build_and_push "leaderboard"  "Dockerfile.leaderboard"
 build_and_push "compiler"     "Dockerfile.compiler"
 build_and_push "runner"       "Dockerfile.runner"
 build_and_push "contestant"   "Dockerfile.contestant"
+build_and_push "lambda-compiler" "cmd/lambda-compiler/Dockerfile"
 
 echo ""
 echo "All images pushed to ECR."

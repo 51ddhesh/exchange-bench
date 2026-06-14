@@ -1,7 +1,7 @@
 variable "project" {}
 
 locals {
-  repos = ["api", "worker", "ingester", "leaderboard", "compiler", "runner", "contestant"]
+  repos = ["api", "worker", "ingester", "leaderboard", "compiler", "runner", "contestant", "lambda-compiler"]
 }
 
 resource "aws_ecr_repository" "repos" {
@@ -42,3 +42,4 @@ output "leaderboard_url" { value = aws_ecr_repository.repos["leaderboard"].repos
 output "compiler_url" { value = aws_ecr_repository.repos["compiler"].repository_url }
 output "runner_url" { value = aws_ecr_repository.repos["runner"].repository_url }
 output "contestant_url" { value = aws_ecr_repository.repos["contestant"].repository_url }
+output "lambda_compiler_url" { value = aws_ecr_repository.repos["lambda-compiler"].repository_url }

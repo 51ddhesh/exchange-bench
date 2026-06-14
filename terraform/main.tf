@@ -73,6 +73,10 @@ module "ec2_workers" {
   timescaledb_ip     = module.timescaledb.private_ip
   alb_target_api_arn = module.alb.target_api_arn
   db_password        = var.db_password
+  s3_bucket_arn      = module.s3.bucket_arn
+  sqs_queue_arn      = module.sqs.queue_arn
+  s3_bucket_name     = module.s3.bucket_name
+  sqs_queue_url      = module.sqs.queue_url
   depends_on         = [module.vpc]
 }
 
@@ -94,4 +98,21 @@ module "ecs" {
   db_password         = var.db_password
   cpu                 = var.ecs_cpu
   memory              = var.ecs_memory
+}
+module "s3" {
+  source  = "./modules/s3"
+  project = var.project
+}
+
+module "sqs" {
+  source  = "./modules/sqs"
+  project = var.project
+}
+
+module "lambda" {
+  source        = "./modules/lambda"
+  project       = var.project
+  sqs_queue_arn = module.sqs.queue_arn
+  s3_bucket_arn = module.s3.bucket_arn
+  image_uri     = "${module.ecr.lambda_compiler_url}:latest"
 }

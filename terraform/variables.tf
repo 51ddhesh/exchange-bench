@@ -18,13 +18,13 @@ variable "vpc_cidr" {
 variable "worker_instance_type" {
   description = "EC2 instance type for worker nodes"
   type        = string
-  default     = "t3.xlarge"
+  default     = "t3.micro"
 }
 
 variable "infra_instance_type" {
   description = "EC2 instance type for Redpanda and TimescaleDB"
   type        = string
-  default     = "t3.large"
+  default     = "t3.micro"
 }
 
 variable "worker_count" {

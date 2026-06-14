@@ -15,11 +15,18 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/51ddhesh/exchange-bench/internal/compiler"
 	"github.com/51ddhesh/exchange-bench/internal/coordinator"
+	"github.com/51ddhesh/exchange-bench/internal/compiler"
 	"github.com/51ddhesh/exchange-bench/internal/runner"
 	"github.com/51ddhesh/exchange-bench/internal/workload"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/sqs"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+	proto "github.com/51ddhesh/exchange-bench/internal/coordinator/proto"
 )
 
 var validExtensions = map[string][]string{
@@ -46,6 +53,7 @@ type job struct {
 	RunID        string
 	Language     string
 	SourcePath   string
+	ArtifactPath string
 }
 
 type jobStatus struct {
@@ -78,6 +86,12 @@ type apiServer struct {
 	attempts    sync.Map
 	teamJobs    sync.Map
 	mu          sync.Mutex
+
+	s3Client    *s3.Client
+	sqsClient   *sqs.Client
+	s3Bucket    string
+	sqsQueueUrl string
+	localMode   bool
 }
 
 func newAPIServer(
@@ -88,6 +102,11 @@ func newAPIServer(
 	queueDepth int,
 	seccompPath string,
 	db *pgxpool.Pool,
+	s3Client *s3.Client,
+	sqsClient *sqs.Client,
+	s3Bucket string,
+	sqsQueueUrl string,
+	localMode bool,
 ) *apiServer {
 	return &apiServer{
 		baseCfg:     baseCfg,
@@ -97,6 +116,11 @@ func newAPIServer(
 		seccompPath: seccompPath,
 		db:          db,
 		jobCh:       make(chan job, queueDepth),
+		s3Client:    s3Client,
+		sqsClient:   sqsClient,
+		s3Bucket:    s3Bucket,
+		sqsQueueUrl: sqsQueueUrl,
+		localMode:   localMode,
 	}
 }
 
@@ -116,11 +140,11 @@ func (a *apiServer) recordTeamJob(teamID, submissionID string) {
 
 func (a *apiServer) startWorkers(ctx context.Context, n int) {
 	for i := 0; i < n; i++ {
-		go a.worker(ctx)
+		go a.worker(ctx, i)
 	}
 }
 
-func (a *apiServer) worker(ctx context.Context) {
+func (a *apiServer) worker(ctx context.Context, id int) {
 	ticks := workload.Generate(a.seed, a.ticks)
 	for {
 		select {
@@ -130,43 +154,68 @@ func (a *apiServer) worker(ctx context.Context) {
 			if !ok {
 				return
 			}
-			a.runJob(ctx, j, ticks)
+			a.runJob(ctx, j, ticks, id)
 		}
 	}
 }
 
-func (a *apiServer) runJob(ctx context.Context, j job, ticks []workload.Tick) {
+func (a *apiServer) runJob(ctx context.Context, j job, ticks []workload.Tick, id int) {
 	a.updateStatus(j.SubmissionID, func(s *jobStatus) {
 		s.State = stateRunning
 	})
 
-	// Step 1: Compile
-	outDir := filepath.Join("/tmp/exchange-bench", j.SubmissionID, "out")
-	artifactPath, compilerOutput, err := compiler.Compile(ctx, j.SourcePath, j.Language, outDir)
+	if a.localMode {
+		outDir := filepath.Join("/tmp/exchange-bench-shared", j.SubmissionID, "out")
+		os.MkdirAll(outDir, 0o755)
+		
+		artifactPath, compilerOutput, err := compiler.Compile(ctx, j.SourcePath, j.Language, outDir)
+		if err != nil {
+			a.updateStatus(j.SubmissionID, func(s *jobStatus) {
+				s.State = stateFailed
+				s.Error = fmt.Sprintf("compile error: %s", compilerOutput)
+			})
+			return
+		}
+		j.ArtifactPath = "file://" + artifactPath
+	}
+
+	// Step 2: Start sandbox on a worker
+	workerAddr := a.baseCfg.WorkerAddrs[id%len(a.baseCfg.WorkerAddrs)]
+	conn, err := grpc.DialContext(ctx, workerAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		a.updateStatus(j.SubmissionID, func(s *jobStatus) {
 			s.State = stateFailed
-			s.Error = fmt.Sprintf("compile error: %v | output: %s", err, compilerOutput)
+			s.Error = fmt.Sprintf("dial worker: %v", err)
+		})
+		return
+	}
+	defer conn.Close()
+
+	client := proto.NewWorkerServiceClient(conn)
+	resp, err := client.StartSandbox(ctx, &proto.StartSandboxRequest{
+		RunId:        j.RunID,
+		BinaryS3Key:  j.ArtifactPath,
+		Language:     j.Language,
+	})
+	if err != nil || resp.Error != "" {
+		a.updateStatus(j.SubmissionID, func(s *jobStatus) {
+			s.State = stateFailed
+			if err != nil {
+				s.Error = fmt.Sprintf("start sandbox rpc: %v", err)
+			} else {
+				s.Error = fmt.Sprintf("start sandbox worker error: %s", resp.Error)
+			}
 		})
 		return
 	}
 
-	// Step 2: Start sandbox
-	sb := runner.NewSandbox(a.seccompPath)
-	if err := sb.Start(ctx, artifactPath, j.Language); err != nil {
-		a.updateStatus(j.SubmissionID, func(s *jobStatus) {
-			s.State = stateFailed
-			s.Error = fmt.Sprintf("sandbox start: %v", err)
-		})
-		return
-	}
-	defer sb.Kill()
+	contestantEndpoint := resp.Endpoint
 
 	// Step 3: Run coordinator
 	cfg := a.baseCfg
 	cfg.RunID = j.RunID
 	cfg.SubmissionID = j.SubmissionID
-	cfg.ContestantEndpoint = sb.Endpoint()
+	cfg.ContestantEndpoint = contestantEndpoint
 
 	c, err := coordinator.New(cfg)
 	if err != nil {
@@ -311,24 +360,39 @@ func (a *apiServer) handleSubmit(w http.ResponseWriter, r *http.Request) {
 	submissionID, attempt := a.nextSubmissionID(teamID)
 	runID := fmt.Sprintf("run-%d", time.Now().UnixNano())
 
-	dir := filepath.Join("/tmp/exchange-bench", submissionID)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		http.Error(w, "internal error creating submission directory", http.StatusInternalServerError)
-		return
-	}
-
-	srcPath := filepath.Join(dir, "source"+ext)
-	f, err := os.Create(srcPath)
-	if err != nil {
-		http.Error(w, "internal error writing source file", http.StatusInternalServerError)
-		return
-	}
-	if _, err := io.Copy(f, file); err != nil {
+	file.Seek(0, 0)
+	
+	var sourcePath string
+	if a.localMode {
+		outDir := filepath.Join("/tmp/exchange-bench-shared", submissionID, "sources")
+		os.MkdirAll(outDir, 0o755)
+		localPath := filepath.Join(outDir, "source"+ext)
+		f, err := os.Create(localPath)
+		if err != nil {
+			http.Error(w, "internal error saving file locally: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		io.Copy(f, file)
 		f.Close()
-		http.Error(w, "internal error writing source file", http.StatusInternalServerError)
-		return
+		sourcePath = localPath
+	} else {
+		s3Key := fmt.Sprintf("sources/%s/source%s", submissionID, ext)
+		if a.s3Client != nil && a.s3Bucket != "" {
+			_, err = a.s3Client.PutObject(r.Context(), &s3.PutObjectInput{
+				Bucket: aws.String(a.s3Bucket),
+				Key:    aws.String(s3Key),
+				Body:   file,
+			})
+			if err != nil {
+				http.Error(w, "internal error uploading to S3: "+err.Error(), http.StatusInternalServerError)
+				return
+			}
+			sourcePath = s3Key
+		} else {
+			http.Error(w, "S3 not configured", http.StatusInternalServerError)
+			return
+		}
 	}
-	f.Close()
 
 	j := job{
 		SubmissionID: submissionID,
@@ -336,7 +400,7 @@ func (a *apiServer) handleSubmit(w http.ResponseWriter, r *http.Request) {
 		Attempt:      attempt,
 		RunID:        runID,
 		Language:     language,
-		SourcePath:   srcPath,
+		SourcePath:   sourcePath,
 	}
 
 	status := &jobStatus{
@@ -350,13 +414,32 @@ func (a *apiServer) handleSubmit(w http.ResponseWriter, r *http.Request) {
 	a.statuses.Store(submissionID, status)
 	a.recordTeamJob(teamID, submissionID)
 
-	select {
-	case a.jobCh <- j:
-	default:
-		a.statuses.Delete(submissionID)
-		os.RemoveAll(dir)
-		http.Error(w, "queue full, try again later", http.StatusServiceUnavailable)
-		return
+	if a.localMode {
+		select {
+		case a.jobCh <- j:
+			// Enqueued
+		default:
+			a.statuses.Delete(submissionID)
+			http.Error(w, "job queue is full", http.StatusServiceUnavailable)
+			return
+		}
+	} else {
+		jobBytes, _ := json.Marshal(j)
+		if a.sqsClient != nil && a.sqsQueueUrl != "" {
+			_, err = a.sqsClient.SendMessage(r.Context(), &sqs.SendMessageInput{
+				QueueUrl:    aws.String(a.sqsQueueUrl),
+				MessageBody: aws.String(string(jobBytes)),
+			})
+			if err != nil {
+				a.statuses.Delete(submissionID)
+				http.Error(w, "internal error queueing job: "+err.Error(), http.StatusInternalServerError)
+				return
+			}
+		} else {
+			a.statuses.Delete(submissionID)
+			http.Error(w, "SQS not configured", http.StatusInternalServerError)
+			return
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -437,6 +520,58 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("ok")) //nolint:errcheck
 }
 
+type webhookPayload struct {
+	SubmissionID string `json:"submission_id"`
+	ArtifactPath string `json:"artifact_path"`
+	Status       string `json:"status"`
+	Error        string `json:"error,omitempty"`
+}
+
+func (a *apiServer) handleWebhook(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var payload webhookPayload
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+
+	val, ok := a.statuses.Load(payload.SubmissionID)
+	if !ok {
+		http.Error(w, "submission not found", http.StatusNotFound)
+		return
+	}
+	st := val.(*jobStatus)
+
+	if payload.Status == "failed" {
+		a.updateStatus(payload.SubmissionID, func(s *jobStatus) {
+			s.State = stateFailed
+			s.Error = "compilation failed: " + payload.Error
+		})
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	j := job{
+		SubmissionID: st.SubmissionID,
+		TeamID:       st.TeamID,
+		Attempt:      st.Attempt,
+		RunID:        st.RunID,
+		Language:     st.Language,
+		ArtifactPath: payload.ArtifactPath,
+	}
+
+	select {
+	case a.jobCh <- j:
+		w.WriteHeader(http.StatusOK)
+	default:
+		http.Error(w, "internal queue full", http.StatusServiceUnavailable)
+	}
+}
+
 func extValid(allowed []string, ext string) bool {
 	for _, e := range allowed {
 		if e == ext {
@@ -486,6 +621,7 @@ func main() {
 	dsn := flag.String("dsn", "", "TimescaleDB connection string (optional, enables score writes)")
 	redpandaBrokers := flag.String("redpanda-brokers", "", "comma-separated Redpanda broker addresses (empty = skip telemetry)")
 	redpandaTopic := flag.String("redpanda-topic", "telemetry-events", "Redpanda topic for telemetry events")
+	localMode := flag.Bool("local", false, "Local testing mode (bypass AWS S3/SQS and compile locally)")
 	flag.Parse()
 
 	if *image == "" {
@@ -516,7 +652,32 @@ func main() {
 		RedpandaTopic:   *redpandaTopic,
 	}
 
-	srv := newAPIServer(baseCfg, *seed, *ticks, *timeout, *queueDepth, *seccomp, db)
+	var s3Client *s3.Client
+	var sqsClient *sqs.Client
+	var awsCfg aws.Config
+
+	var s3Bucket string
+	var sqsQueueUrl string
+
+	if !*localMode {
+		s3Bucket = os.Getenv("S3_BUCKET")
+		sqsQueueUrl = os.Getenv("SQS_QUEUE_URL")
+		if s3Bucket == "" || sqsQueueUrl == "" {
+			log.Println("WARNING: S3_BUCKET or SQS_QUEUE_URL not set. Async compilation will fail.")
+		}
+		
+		var err error
+		awsCfg, err = config.LoadDefaultConfig(context.Background())
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "api: failed to load AWS config: %v\n", err)
+			os.Exit(1)
+		}
+
+		s3Client = s3.NewFromConfig(awsCfg)
+		sqsClient = sqs.NewFromConfig(awsCfg)
+	}
+
+	srv := newAPIServer(baseCfg, *seed, *ticks, *timeout, *queueDepth, *seccomp, db, s3Client, sqsClient, s3Bucket, sqsQueueUrl, *localMode)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -528,6 +689,7 @@ func main() {
 	mux.HandleFunc("/submissions", srv.handleSubmit)
 	mux.HandleFunc("/submissions/", srv.handleGetSubmission)
 	mux.HandleFunc("/teams/", srv.handleTeamSubmissions)
+	mux.HandleFunc("/webhook/compiler", srv.handleWebhook)
 
 	log.Printf("[api] listening on %s  pool=%d  queue=%d  workers=%v  image=%s",
 		*listen, *pool, *queueDepth, addrs, *image)
