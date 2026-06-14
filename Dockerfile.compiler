@@ -4,6 +4,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     g++ \
     libssl-dev \
     libboost-all-dev \
+    zlib1g-dev \
     rustc \
     cargo \
     python3 \
@@ -12,9 +13,24 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     xz-utils \
     ca-certificates \
     curl \
+    git \
+    make \
     && pip3 install websockets --break-system-packages \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
+
+# Install uSockets (static library) without QUIC
+RUN wget -qO- https://github.com/uNetworking/uSockets/archive/refs/tags/v0.8.8.tar.gz | tar xz -C /tmp \
+    && cd /tmp/uSockets-0.8.8 \
+    && make WITH_SSL=1 \
+    && cp uSockets.a /usr/local/lib/libusockets.a \
+    && cp -r src /usr/local/include/uSockets \
+    && rm -rf /tmp/uSockets-0.8.8
+
+# Install uWebSockets (headers)
+RUN wget -qO- https://github.com/uNetworking/uWebSockets/archive/refs/tags/v20.73.0.tar.gz | tar xz -C /tmp \
+    && cp -r /tmp/uWebSockets-20.73.0/src /usr/local/include/uWebSockets \
+    && rm -rf /tmp/uWebSockets-20.73.0
 
 # Install Go 1.26.3 directly from go.dev.
 RUN curl -fsSL https://go.dev/dl/go1.26.3.linux-amd64.tar.gz \
@@ -37,6 +53,3 @@ RUN mkdir -p /tmp/warmup-rs/src \
     && cd /tmp/warmup-rs \
     && CARGO_HOME=/root/.cargo cargo fetch \
     && rm -rf /tmp/warmup-rs
-
-# uWebSockets header for C++ contestants.
-COPY deployments/docker/uws.h /usr/local/include/uws.h

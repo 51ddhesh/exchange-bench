@@ -2,10 +2,8 @@ FROM ubuntu:24.04
 
 # Minimal runtime dependencies for all supported languages:
 #   python3     — for Python submissions
-#   libssl3     — for C++ submissions linked against SSL
-#   libstdc++6  — for C++ submissions using libstdc++
 #
-# Go, Rust, and Zig produce statically linked binaries by default
+# Go, Rust, Zig, and C++ produce statically linked binaries
 # and need no additional runtime libraries.
 #
 # No compiler tooling is included — compilation happens in exchange-bench-compiler.
@@ -13,8 +11,6 @@ FROM ubuntu:24.04
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     python3-pip \
-    libssl3 \
-    libstdc++6 \
     && pip3 install websockets --break-system-packages \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
