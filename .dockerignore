@@ -1,0 +1,9 @@
+.git
+.gitignore
+terraform
+bin
+lambda-compiler
+worker
+api
+*.log
+full_diff.txt
