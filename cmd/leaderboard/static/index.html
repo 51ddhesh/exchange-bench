@@ -188,7 +188,7 @@ button:disabled { color: #444; cursor: default; }
 <script>
 const prevRanks = { systems: {}, gc: {}, interpreted: {} };
 const langExt   = { go: '.go', cpp: '.cpp', rust: '.rs', python: '.py' };
-const API       = 'http://localhost:8081';
+const API       = '';  // Routes to ALB; use 'http://localhost:8081' for local dev
 
 function pct(v)   { return (v*100).toFixed(2)+'%'; }
 function num(v)   { return Math.round(v).toLocaleString(); }
