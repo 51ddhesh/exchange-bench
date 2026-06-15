@@ -80,6 +80,3 @@ To understand the internal workings of ExchangeBench, please refer to the detail
 - [**`DOC.md`**](DOC.md): Deep dive into the distributed architecture, scaling model, security boundaries, and validation algorithms.
 - [**`GUIDE.md`**](GUIDE.md): The official manual for competitors, detailing WebSocket requirements, interaction protocols, and rule enforcement.
 
-## Contributing
-
-While this project was initially built for the IICPC Summer Hackathon, contributions are welcome. If you are modifying the platform, note that the core testing mechanism relies on exact determinism. Any changes to `internal/workload` or `internal/orderbook` must ensure that the generated order sequences remain perfectly reproducible across platforms.
