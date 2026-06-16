@@ -77,6 +77,6 @@ Once the run completes, check `http://localhost:8080` in your browser to see the
 ## Architecture & Documentation
 
 To understand the internal workings of ExchangeBench, please refer to the detailed documentation files provided:
-- [**`DOC.md`**](DOC.md): Deep dive into the distributed architecture, scaling model, security boundaries, and validation algorithms.
+- [**`DESIGN_DOC.md`**](DESIGN_DOC.md): Deep dive into the distributed architecture, scaling model, security boundaries, and validation algorithms.
 - [**`GUIDE.md`**](GUIDE.md): The official manual for competitors, detailing WebSocket requirements, interaction protocols, and rule enforcement.
 
