@@ -37,7 +37,6 @@ services:
 
   timescaledb:
     image: timescale/timescaledb-ha:pg16
-    pull_policy: never
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: password
