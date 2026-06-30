@@ -17,7 +17,7 @@ This repository contains the full source code for the platform, including the or
 ## Prerequisites
 
 To run ExchangeBench locally, you will need:
-- **Go 1.22+**
+- **Go 1.26.3+**
 - **Docker & Docker Compose** (for running the sandboxes and infrastructure)
 - **Node.js & npm** (if you wish to modify the leaderboard frontend)
 
